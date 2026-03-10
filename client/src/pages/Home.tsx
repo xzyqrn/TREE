@@ -42,7 +42,7 @@ function StatsLoader({ username, index, onLoaded }: { username: string; index: n
   const [enabled, setEnabled] = useState(index === 0);
   useEffect(() => {
     if (index === 0) return;
-    const timer = setTimeout(() => setEnabled(true), index * 1200);
+    const timer = setTimeout(() => setEnabled(true), index * 400);
     return () => clearTimeout(timer);
   }, [index]);
 

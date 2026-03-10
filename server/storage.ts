@@ -13,7 +13,28 @@ export class MemStorage implements IStorage {
 
   constructor() {
     this.trackedUsers = new Map();
-    const defaultUsers = ["torvalds", "gaearon", "yyx990803", "sindresorhus", "addyosmani"];
+    const defaultUsers = [
+      "torvalds",    // Linux
+      "gaearon",     // React (Dan Abramov)
+      "yyx990803",   // Vue.js (Evan You)
+      "sindresorhus",// npm legend
+      "addyosmani",  // Google Chrome DevRel
+      "tj",          // Express, many Node tools
+      "antirez",     // Redis
+      "jeresig",     // jQuery
+      "mrdoob",      // Three.js
+      "dhh",         // Ruby on Rails
+      "getify",      // You Don't Know JS
+      "paulirish",   // Chrome DevTools
+      "jashkenas",   // Backbone, CoffeeScript, Underscore
+      "fabpot",      // Symfony / PHP
+      "nicolo-ribaudo", // Babel
+      "evanw",       // esbuild
+      "ryanflorence", // React Router
+      "defunkt",     // GitHub co-founder
+      "matz",        // Ruby
+      "nickhudkins", // CSS-in-JS / styled-components
+    ];
     defaultUsers.forEach((username) => {
       const id = randomUUID();
       const user: TrackedUser = { id, username, addedAt: new Date().toISOString() };
