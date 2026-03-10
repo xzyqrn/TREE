@@ -14,366 +14,757 @@ interface ForestWorldProps {
   onNearbyUsers?: (usernames: string[]) => void;
 }
 
-const STATUS_COLORS = {
-  active:     { foliage: [0x1a5c20, 0x2d7a30, 0x3a9040, 0x4aa852, 0x6bcb74], trunk: 0x4e342e, ground: 0x3d8b40 },
-  moderate:   { foliage: [0x2e7d32, 0x3d9142, 0x4caa52, 0x65c26e, 0x88d48f], trunk: 0x5d4037, ground: 0x4a9e50 },
-  occasional: { foliage: [0x4d7c2a, 0x629336, 0x77ab42, 0x90c458, 0xadd878], trunk: 0x6d4c41, ground: 0x7cb342 },
-  inactive:   { foliage: [0x7a7a25, 0x969630, 0xaeae38, 0xc6c64a, 0xdede6a], trunk: 0x8d6e63, ground: 0xaaba30 },
+// ─── RNG ─────────────────────────────────────────────────────────────────────
+function rng(seed: number, i: number): number {
+  return Math.abs(Math.sin(seed * 127.1 + i * 311.7 + 43758.5453)) % 1;
+}
+function rngRange(seed: number, i: number, lo: number, hi: number): number {
+  return lo + rng(seed, i) * (hi - lo);
+}
+
+// ─── TREE STAGING ─────────────────────────────────────────────────────────────
+function getStage(commits: number): 1 | 2 | 3 | 4 | 5 {
+  if (commits < 50)     return 1; // seedling/sprout
+  if (commits < 500)    return 2; // sapling
+  if (commits < 5000)   return 3; // young tree
+  if (commits < 50000)  return 4; // mature tree
+  return 5;                        // ancient/giant
+}
+
+function getTreeHeight(commits: number): number {
+  if (commits < 50)    return 0.3 + (commits / 49)              * 0.5;
+  if (commits < 500)   return 0.8 + ((commits - 50)   / 450)   * 1.8;
+  if (commits < 5000)  return 2.6 + ((commits - 500)  / 4500)  * 3.4;
+  if (commits < 50000) return 6.0 + ((commits - 5000) / 45000) * 3.5;
+  return 9.5 + Math.min(2.5, Math.log10(commits / 50000) * 2.5);
+}
+
+function commitT(commits: number): number {
+  return Math.min(1, Math.log(1 + commits) / Math.log(1 + 200000));
+}
+
+// ─── ACTIVITY PALETTE ─────────────────────────────────────────────────────────
+const PALETTE = {
+  active:     { bark: [0x3b2106, 0x4e2e0d, 0x5c3511], leaf: [0x1b5e20, 0x2e7d32, 0x388e3c, 0x43a047, 0x1a6b0a], needle: [0x1b4520, 0x2d5e2a, 0x366132], duff: 0x2d5a1b },
+  moderate:   { bark: [0x4a3010, 0x5d3e18, 0x6b4820], leaf: [0x2e7d32, 0x388e3c, 0x4caf50, 0x66bb6a, 0x81c784], needle: [0x27542b, 0x365e33, 0x3d6b38], duff: 0x406b28 },
+  occasional: { bark: [0x5d4422, 0x6d5030, 0x7a5c38], leaf: [0x558b2f, 0x689f38, 0x7cb342, 0x9ccc65, 0xaed581], needle: [0x3d5c20, 0x4d6e2a, 0x5a7a32], duff: 0x607040 },
+  inactive:   { bark: [0x795548, 0x8d6e63, 0xa1887f], leaf: [0x827717, 0x9e9d24, 0xafb42b, 0xc6c944, 0xdce775], needle: [0x5a5a10, 0x6b6b18, 0x7a7a22], duff: 0x7a7a30 },
 };
 
-// Stage used only for color selection & feature unlock thresholds
-function getStage(commits: number) {
-  if (commits < 100)    return 1;
-  if (commits < 1000)   return 2;
-  if (commits < 10000)  return 3;
-  if (commits < 100000) return 4;
-  return 5;
+function getPalette(status: string) {
+  return (PALETTE as any)[status] ?? PALETTE.inactive;
 }
 
-// Continuous log-scale 0→1 parameter (0 commits → 0, 1000000+ commits → 1)
-function commitT(commits: number): number {
-  return Math.min(1, Math.log(1 + commits) / Math.log(1 + 1000000));
+// ─── GEOMETRY HELPERS ─────────────────────────────────────────────────────────
+
+function makeMat(color: number | THREE.Color, roughOffset = 0): THREE.MeshLambertMaterial {
+  return new THREE.MeshLambertMaterial({ color });
 }
 
-// Piecewise linear height — each stage band spans a fixed height range
-// so differences within a stage are always clearly visible
-function getTreeHeight(commits: number): number {
-  if (commits < 100)    return 0.50 + (commits / 99)               * 0.80; // 0.50 → 1.30
-  if (commits < 1000)   return 1.30 + ((commits - 100)   / 900)    * 1.70; // 1.30 → 3.00
-  if (commits < 10000)  return 3.00 + ((commits - 1000)  / 9000)   * 2.00; // 3.00 → 5.00
-  if (commits < 100000) return 5.00 + ((commits - 10000) / 90000)  * 0.80; // 5.00 → 5.80
-  return 5.80 + Math.min(0.40, Math.log10(commits / 100000) * 0.40);        // 5.80 → 6.20
+function varyColor(hex: number, s: number, i: number): THREE.Color {
+  return new THREE.Color(hex).offsetHSL(
+    rngRange(s, i,     -0.03,  0.03),
+    rngRange(s, i + 1, -0.08,  0.08),
+    rngRange(s, i + 2, -0.07,  0.07),
+  );
 }
 
-// Deterministic pseudo-random seeded by commit count + index
-function rng(seed: number, i: number): number {
-  return Math.abs(Math.sin(seed * 127.1 + i * 311.7 + 43758.5)) % 1;
+// Build a tapered trunk from stacked cylinder segments with organic offsets
+function buildTrunk(
+  trunkH: number, baseR: number, tipR: number,
+  barkHexes: number[], s: number
+): THREE.Group {
+  const g = new THREE.Group();
+  const segs = Math.max(4, Math.round(trunkH / 0.6));
+  const segH = trunkH / segs;
+
+  for (let i = 0; i < segs; i++) {
+    const frac = i / segs;
+    const r0 = baseR * (1 - frac) + tipR * frac;
+    const r1 = baseR * (1 - (frac + 1 / segs)) + tipR * (frac + 1 / segs);
+    const barkHex = barkHexes[Math.floor(frac * barkHexes.length)];
+    const col = varyColor(barkHex, s, 500 + i * 3);
+    const mat = makeMat(col);
+    const mesh = new THREE.Mesh(
+      new THREE.CylinderGeometry(Math.max(r1, tipR * 0.5), r0, segH * 1.02, 7, 1),
+      mat
+    );
+    mesh.position.set(
+      rngRange(s, 600 + i, -0.5, 0.5) * baseR * 0.15,
+      i * segH + segH / 2,
+      rngRange(s, 700 + i, -0.5, 0.5) * baseR * 0.15,
+    );
+    mesh.rotation.z = rngRange(s, 800 + i, -1, 1) * 0.025;
+    mesh.rotation.x = rngRange(s, 900 + i, -1, 1) * 0.025;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    g.add(mesh);
+  }
+  return g;
 }
 
-function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THREE.Group {
-  const group  = new THREE.Group();
-  const stage  = getStage(commits);
-  const t      = commitT(commits);
-  const s      = commits;
-  const colors = STATUS_COLORS[status] ?? STATUS_COLORS.inactive;
+// Root buttresses — wedge fins at the base
+function buildRoots(baseR: number, count: number, mat: THREE.MeshLambertMaterial, s: number): THREE.Group {
+  const g = new THREE.Group();
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2 + rngRange(s, 1000 + i, -0.4, 0.4);
+    const fH = baseR * rngRange(s, 1100 + i, 1.2, 2.0);
+    const fW = baseR * rngRange(s, 1200 + i, 0.4, 0.7);
+    const fin = new THREE.Mesh(
+      new THREE.CylinderGeometry(baseR * 0.03, fW, fH, 4),
+      mat
+    );
+    fin.position.set(Math.cos(a) * baseR * 0.75, fH / 2, Math.sin(a) * baseR * 0.75);
+    fin.rotation.z =  Math.cos(a) * 0.42;
+    fin.rotation.x = -Math.sin(a) * 0.42;
+    fin.castShadow = true;
+    g.add(fin);
+  }
+  return g;
+}
+
+// Foliage blob cluster
+function buildLeafCloud(
+  cx: number, cy: number, cz: number,
+  radius: number, leafHexes: number[], s: number, idx: number
+): THREE.Group {
+  const g = new THREE.Group();
+  const blobs = 4 + Math.floor(rng(s, 2000 + idx) * 4);
+  for (let i = 0; i < blobs; i++) {
+    const r    = radius * rngRange(s, 2100 + idx * 7 + i, 0.45, 0.90);
+    const ox   = rngRange(s, 2200 + idx * 7 + i, -1, 1) * radius * 0.75;
+    const oy   = rngRange(s, 2300 + idx * 7 + i, -0.4, 0.6) * radius * 0.6;
+    const oz   = rngRange(s, 2400 + idx * 7 + i, -1, 1) * radius * 0.75;
+    const hex  = leafHexes[i % leafHexes.length];
+    const col  = varyColor(hex, s, 2500 + idx * 7 + i);
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 6, 5),
+      makeMat(col)
+    );
+    mesh.position.set(cx + ox, cy + oy, cz + oz);
+    mesh.scale.y = rngRange(s, 2600 + idx * 7 + i, 0.65, 1.0);
+    mesh.castShadow = true;
+    g.add(mesh);
+  }
+  return g;
+}
+
+// Conifer cone layer
+function buildConeLayer(
+  y: number, r: number, h: number, needleHexes: number[],
+  segments: number, s: number, idx: number
+): THREE.Group {
+  const g = new THREE.Group();
+  const hex = needleHexes[idx % needleHexes.length];
+  const col = varyColor(hex, s, 3000 + idx * 3);
+  const outer = new THREE.Mesh(new THREE.ConeGeometry(r, h, segments, 1), makeMat(col));
+  outer.position.y = y + h * 0.42;
+  outer.rotation.y = rng(s, 3100 + idx) * Math.PI * 2;
+  outer.castShadow = true;
+  g.add(outer);
+  // inner darker volume for depth
+  const col2 = varyColor(needleHexes[0], s, 3200 + idx * 3);
+  const inner = new THREE.Mesh(new THREE.ConeGeometry(r * 0.68, h * 0.85, segments, 1), makeMat(col2));
+  inner.position.y = y + h * 0.34;
+  inner.rotation.y = outer.rotation.y + 0.55;
+  g.add(inner);
+  return g;
+}
+
+// ─── TREE BUILDER ─────────────────────────────────────────────────────────────
+function buildTreeMesh(commits: number, status: string): THREE.Group {
+  const group = new THREE.Group();
+  const stage = getStage(commits);
+  const t     = commitT(commits);
+  const s     = commits;
+  const pal   = getPalette(status);
 
   const totalH = getTreeHeight(commits);
-  // Conifers (1-3) have shorter visible trunk; deciduous (4-5) expose more trunk
-  const trunkH = totalH * [0.30, 0.34, 0.38, 0.52, 0.58][stage - 1];
-  const trunkR = 0.055 + t * 0.28;
-  const canopyMults = [0.40, 0.62, 0.90, 1.14, 1.46];
-  const canopyR = (0.24 + t * 1.20) * canopyMults[stage - 1];
+  const trunkFrac = [0.25, 0.30, 0.35, 0.48, 0.55][stage - 1];
+  const trunkH = totalH * trunkFrac;
+  const baseR  = 0.035 + t * 0.28;
+  const tipR   = baseR * 0.12;
 
-  const trunkMat    = new THREE.MeshLambertMaterial({ color: colors.trunk });
-  const foliageMats = colors.foliage.map(c => new THREE.MeshLambertMaterial({ color: c }));
+  const barkMat = makeMat(varyColor(pal.bark[0], s, 0));
+  const duffMat = makeMat(varyColor(pal.duff, s, 10));
 
-  // ── Ground ring (moss/soil) ────────────────────────────────────────────
-  const moss = new THREE.Mesh(
-    new THREE.RingGeometry(trunkR * 0.9, trunkR * (2.0 + stage * 0.55), 16),
-    new THREE.MeshLambertMaterial({ color: colors.ground })
-  );
-  moss.rotation.x = -Math.PI / 2;
-  moss.position.y = 0.01;
-  group.add(moss);
+  // ── STAGE 1: seedling / tiny sprout ──────────────────────────────────────
+  if (stage === 1) {
+    // Single skinny stalk
+    const stalk = new THREE.Mesh(
+      new THREE.CylinderGeometry(baseR * 0.3, baseR * 0.5, totalH * 0.6, 5),
+      makeMat(varyColor(pal.bark[1], s, 20))
+    );
+    stalk.position.y = totalH * 0.3;
+    stalk.castShadow = true;
+    group.add(stalk);
 
-  // ── Trunk ─────────────────────────────────────────────────────────────
-  const trunk = new THREE.Mesh(
-    new THREE.CylinderGeometry(trunkR * 0.36, trunkR, trunkH, 9),
-    trunkMat
-  );
-  trunk.position.y = trunkH / 2;
-  trunk.rotation.z = (rng(s, 0) - 0.5) * 0.05;
-  trunk.rotation.x = (rng(s, 1) - 0.5) * 0.05;
-  trunk.castShadow = true;
-  trunk.receiveShadow = true;
-  group.add(trunk);
-
-  // ── Root buttresses — stage 4 (4 fins) and stage 5 (6 fins) ──────────
-  if (stage >= 4) {
-    const finN = stage === 5 ? 6 : 4;
-    for (let i = 0; i < finN; i++) {
-      const a  = (i / finN) * Math.PI * 2 + rng(s, 10 + i) * 0.22;
-      const fH = trunkH * (0.30 + rng(s, 20 + i) * 0.10);
-      const fin = new THREE.Mesh(
-        new THREE.CylinderGeometry(trunkR * 0.06, trunkR * 0.42, fH, 4),
-        trunkMat
+    // 2-3 tiny leaf tufts
+    const leafCount = 2 + Math.floor(rng(s, 30) * 2);
+    for (let i = 0; i < leafCount; i++) {
+      const a   = (i / leafCount) * Math.PI * 2;
+      const lR  = 0.10 + rng(s, 40 + i) * 0.12;
+      const leaf = new THREE.Mesh(
+        new THREE.SphereGeometry(lR, 5, 4),
+        makeMat(varyColor(pal.leaf[i % pal.leaf.length], s, 50 + i))
       );
-      fin.position.set(Math.cos(a) * trunkR * 0.75, fH / 2, Math.sin(a) * trunkR * 0.75);
-      fin.rotation.z =  Math.cos(a) * 0.44;
-      fin.rotation.x = -Math.sin(a) * 0.44;
-      group.add(fin);
+      leaf.position.set(
+        Math.cos(a) * 0.09,
+        totalH * 0.55 + rngRange(s, 60 + i, -0.05, 0.1),
+        Math.sin(a) * 0.09
+      );
+      leaf.scale.y = 0.7;
+      leaf.castShadow = true;
+      group.add(leaf);
     }
+    // Tiny moss patch
+    const moss = new THREE.Mesh(new THREE.CircleGeometry(baseR * 3, 10), duffMat);
+    moss.rotation.x = -Math.PI / 2;
+    moss.position.y = 0.005;
+    group.add(moss);
+    return group;
   }
 
-  const foliageBase = trunkH * 0.80;
-  const foliageSpan = totalH - foliageBase;
+  // ── STAGE 2: sapling ─────────────────────────────────────────────────────
+  if (stage === 2) {
+    // Thin single-piece trunk
+    const trunk = buildTrunk(trunkH, baseR, tipR * 2, pal.bark, s);
+    group.add(trunk);
 
-  // ══ CONIFER STAGES (1-3): layered stacked cones ════════════════════════
-  if (stage <= 3) {
-    // Aspect ratio: stage 1 = very tall narrow spike, stage 3 = classic pyramid
-    const coneAspect = [2.6, 1.7, 1.1][stage - 1];
-    const taper      = [0.45, 0.58, 0.72][stage - 1];
-    const layerCnt   = [1, 3, 5][stage - 1];
+    // Ground duff ring
+    const duff = new THREE.Mesh(new THREE.CircleGeometry(baseR * 4, 12), duffMat);
+    duff.rotation.x = -Math.PI / 2;
+    duff.position.y = 0.005;
+    group.add(duff);
 
-    for (let i = 0; i < layerCnt; i++) {
-      const lf = layerCnt === 1 ? 0 : i / (layerCnt - 1);
-      const r  = canopyR * (1 - lf * taper);
-      const h  = r * coneAspect * 2;
-      const y  = foliageBase + lf * foliageSpan;
-      const rot = rng(s, 30 + i) * Math.PI * 2;
+    // Sapling — slender conifer style with 2 cone layers
+    const clusterR = 0.18 + t * 0.35;
+    for (let i = 0; i < 2; i++) {
+      const lf = i / 1;
+      const r  = clusterR * (1 - lf * 0.45);
+      const h  = r * 2.8;
+      const y  = trunkH * 0.7 + lf * (totalH - trunkH * 0.7);
+      const cg = buildConeLayer(y, r, h, pal.needle, 6, s, i);
+      group.add(cg);
+    }
+    return group;
+  }
 
-      // Main outer cone
-      const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(r, h, 7 + stage),
-        foliageMats[i % foliageMats.length]
-      );
-      cone.position.y = y + h * 0.34;
-      cone.rotation.y = rot;
-      cone.castShadow = true;
-      group.add(cone);
+  // ── STAGE 3: young tree ───────────────────────────────────────────────────
+  if (stage === 3) {
+    const trunk = buildTrunk(trunkH, baseR, tipR, pal.bark, s);
+    group.add(trunk);
 
-      // Overlapping inner cone (offset) for depth and fullness — stage 2+
-      if (stage >= 2) {
-        const inner = new THREE.Mesh(
-          new THREE.ConeGeometry(r * 0.78, h * 0.84, 7 + stage),
-          foliageMats[(i + 1) % foliageMats.length]
+    const rootCount = 3;
+    const rootMat = makeMat(varyColor(pal.bark[0], s, 1));
+    group.add(buildRoots(baseR, rootCount, rootMat, s));
+
+    const duff = new THREE.Mesh(new THREE.CircleGeometry(baseR * 5, 14), duffMat);
+    duff.rotation.x = -Math.PI / 2;
+    duff.position.y = 0.005;
+    group.add(duff);
+
+    // Multi-layer conifer — 4 layers
+    const clusterR = 0.35 + t * 0.55;
+    const layers = 4;
+    for (let i = 0; i < layers; i++) {
+      const lf = i / (layers - 1);
+      const r  = clusterR * (1 - lf * 0.55);
+      const h  = r * 2.4;
+      const y  = trunkH * 0.6 + lf * (totalH - trunkH * 0.6);
+      const cg = buildConeLayer(y, r, h, pal.needle, 7, s, i);
+      group.add(cg);
+
+      // Side branch stubs at each layer
+      for (let bi = 0; bi < 4; bi++) {
+        const ba  = (bi / 4) * Math.PI * 2 + rng(s, 4000 + i * 4 + bi) * 0.8;
+        const bL  = r * rngRange(s, 4100 + i * 4 + bi, 0.5, 0.9);
+        const brn = new THREE.Mesh(
+          new THREE.CylinderGeometry(baseR * 0.03, baseR * 0.09, bL, 5),
+          makeMat(varyColor(pal.bark[1], s, 4200 + i * 4 + bi))
         );
-        inner.position.y = y + h * 0.26;
-        inner.rotation.y = rot + Math.PI / 6;
-        group.add(inner);
+        brn.position.set(Math.cos(ba) * baseR, y + h * 0.05, Math.sin(ba) * baseR);
+        brn.rotation.z =  Math.cos(ba) * 0.82;
+        brn.rotation.x = -Math.sin(ba) * 0.82;
+        brn.castShadow = true;
+        group.add(brn);
       }
     }
+    return group;
+  }
 
-    // Upward branches on stage 3 (steep, hidden inside foliage)
-    if (stage === 3) {
-      const bMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + rng(s, 40 + i) * 0.3;
-        const bLen = trunkH * (0.30 + rng(s, 50 + i) * 0.16);
-        const b = new THREE.Mesh(new THREE.CylinderGeometry(trunkR * 0.06, trunkR * 0.16, bLen, 5), bMat);
-        b.position.set(Math.cos(a) * trunkR * 1.2, trunkH * (0.50 + (i % 2) * 0.12), Math.sin(a) * trunkR * 1.2);
-        b.rotation.z =  Math.cos(a) * 0.55;
-        b.rotation.x = -Math.sin(a) * 0.55;
-        b.castShadow = true;
-        group.add(b);
+  // ── STAGE 4: mature deciduous ─────────────────────────────────────────────
+  if (stage === 4) {
+    const trunk = buildTrunk(trunkH, baseR, tipR, pal.bark, s);
+    group.add(trunk);
+    const rootMat = makeMat(varyColor(pal.bark[0], s, 1));
+    group.add(buildRoots(baseR, 5, rootMat, s));
+
+    const duff = new THREE.Mesh(new THREE.CircleGeometry(baseR * 6.5, 16), duffMat);
+    duff.rotation.x = -Math.PI / 2;
+    duff.position.y = 0.005;
+    group.add(duff);
+
+    const branchMat = makeMat(varyColor(pal.bark[1], s, 2));
+    const mainBranches = 6 + Math.floor(rng(s, 5000) * 3);
+    const canopyR = 0.65 + t * 1.1;
+
+    for (let i = 0; i < mainBranches; i++) {
+      const a       = (i / mainBranches) * Math.PI * 2 + rngRange(s, 5100 + i, -0.5, 0.5);
+      const bLen    = trunkH * rngRange(s, 5200 + i, 0.42, 0.72);
+      const bTilt   = rngRange(s, 5300 + i, 0.7, 1.1);
+      const hFrac   = rngRange(s, 5400 + i, 0.55, 0.85);
+      const brnMain = new THREE.Mesh(
+        new THREE.CylinderGeometry(baseR * 0.05, baseR * 0.20, bLen, 6),
+        branchMat
+      );
+      brnMain.position.set(Math.cos(a) * baseR, trunkH * hFrac, Math.sin(a) * baseR);
+      brnMain.rotation.z =  Math.cos(a) * bTilt;
+      brnMain.rotation.x = -Math.sin(a) * bTilt;
+      brnMain.castShadow = true;
+      group.add(brnMain);
+
+      const endX = Math.cos(a) * (baseR + Math.sin(bTilt) * bLen * 0.55);
+      const endY = trunkH * hFrac + Math.cos(bTilt) * bLen * 0.55;
+      const endZ = Math.sin(a) * (baseR + Math.sin(bTilt) * bLen * 0.55);
+
+      // 2-3 secondary branches
+      const secN = 2 + Math.floor(rng(s, 5500 + i) * 2);
+      for (let si = 0; si < secN; si++) {
+        const sa  = a + rngRange(s, 5600 + i * 3 + si, -0.8, 0.8);
+        const sL  = bLen * rngRange(s, 5700 + i * 3 + si, 0.28, 0.48);
+        const sTi = bTilt + rngRange(s, 5800 + i * 3 + si, 0.1, 0.4);
+        const sec = new THREE.Mesh(
+          new THREE.CylinderGeometry(baseR * 0.02, baseR * 0.07, sL, 5),
+          branchMat
+        );
+        sec.position.set(
+          endX * rngRange(s, 5900 + i * 3 + si, 0.4, 0.8),
+          endY + rngRange(s, 6000 + i * 3 + si, -0.15, 0.15) * trunkH * 0.05,
+          endZ * rngRange(s, 6100 + i * 3 + si, 0.4, 0.8),
+        );
+        sec.rotation.z =  Math.cos(sa) * sTi;
+        sec.rotation.x = -Math.sin(sa) * sTi;
+        sec.castShadow = true;
+        group.add(sec);
       }
+
+      // Leaf cluster at branch end
+      const clR = canopyR * rngRange(s, 6200 + i, 0.28, 0.50);
+      group.add(buildLeafCloud(endX, endY, endZ, clR, pal.leaf, s, i));
     }
 
-  // ══ DECIDUOUS STAGES (4-5): sphere crown ═══════════════════════════════
-  } else {
-    const bMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
-
-    // Exposed branches — 5 (mature) or 7 (ancient), nearly horizontal
-    const branchN    = stage === 4 ? 5 : Math.round(6 + t * 3);
-    const branchTilt = stage === 4 ? 1.05 : 1.35;
-
-    for (let i = 0; i < branchN; i++) {
-      const a    = (i / branchN) * Math.PI * 2 + rng(s, 60 + i) * 0.45;
-      const bLen = trunkH * (0.35 + t * 0.25 + rng(s, 70 + i) * 0.12);
-      const b    = new THREE.Mesh(
-        new THREE.CylinderGeometry(trunkR * 0.07, trunkR * 0.19, bLen, 6),
-        bMat
-      );
-      const heightFrac = 0.55 + (i % 3) * 0.08 + rng(s, 80 + i) * 0.05;
-      b.position.set(Math.cos(a) * trunkR * 1.3, trunkH * heightFrac, Math.sin(a) * trunkR * 1.3);
-      b.rotation.z =  Math.cos(a) * branchTilt;
-      b.rotation.x = -Math.sin(a) * branchTilt;
-      b.castShadow = true;
-      group.add(b);
-
-      // Secondary branch off each main branch
-      const sa   = a + (rng(s, 90 + i) - 0.5) * 1.0;
-      const sLen = bLen * (0.40 + rng(s, 100 + i) * 0.20);
-      const sb   = new THREE.Mesh(
-        new THREE.CylinderGeometry(trunkR * 0.035, trunkR * 0.09, sLen, 5),
-        bMat
-      );
-      sb.position.set(
-        Math.cos(a) * trunkR * 1.3 + Math.cos(sa) * bLen * 0.42,
-        trunkH * heightFrac + rng(s, 110 + i) * trunkH * 0.07,
-        Math.sin(a) * trunkR * 1.3 + Math.sin(sa) * bLen * 0.42
-      );
-      sb.rotation.z =  Math.cos(sa) * (branchTilt + 0.30);
-      sb.rotation.x = -Math.sin(sa) * (branchTilt + 0.30);
-      sb.castShadow = true;
-      group.add(sb);
-    }
-
-    // Crown: 1 large central sphere + surrounding spheres
-    const crownParts = stage === 4 ? 4 : 6;
-    const mainR = canopyR * (stage === 4 ? 0.62 : 0.68);
-    const crownY = totalH - mainR * 0.55;
-
-    // Central sphere
+    // Central crown
+    const cY = totalH * 0.82;
+    const crownR = canopyR * 0.65;
     const center = new THREE.Mesh(
-      new THREE.SphereGeometry(mainR, 9, 7),
-      foliageMats[0]
+      new THREE.SphereGeometry(crownR, 8, 6),
+      makeMat(varyColor(pal.leaf[0], s, 10))
     );
-    center.position.y = crownY;
-    center.scale.y = stage === 5 ? 0.72 : 0.82;
+    center.position.y = cY;
+    center.scale.y = 0.78;
     center.castShadow = true;
     group.add(center);
 
-    // Surrounding spheres arranged in a ring
-    for (let i = 0; i < crownParts; i++) {
-      const angle = (i / crownParts) * Math.PI * 2 + rng(s, 120 + i) * 0.35;
-      const dist  = canopyR * (0.38 + rng(s, 130 + i) * 0.22);
-      const sr    = mainR * (0.58 + rng(s, 140 + i) * 0.28);
-      const sy    = crownY - mainR * (0.20 + rng(s, 150 + i) * 0.35);
+    for (let i = 0; i < 6; i++) {
+      const a  = (i / 6) * Math.PI * 2 + rng(s, 6300 + i) * 0.6;
+      const d  = crownR * rngRange(s, 6400 + i, 0.35, 0.65);
+      const sr = crownR * rngRange(s, 6500 + i, 0.45, 0.72);
       const sp = new THREE.Mesh(
-        new THREE.SphereGeometry(sr, 8, 6),
-        foliageMats[(i + 1) % foliageMats.length]
+        new THREE.SphereGeometry(sr, 7, 5),
+        makeMat(varyColor(pal.leaf[(i + 1) % pal.leaf.length], s, 6600 + i))
       );
-      sp.position.set(Math.cos(angle) * dist, sy, Math.sin(angle) * dist);
-      sp.scale.y = 0.78 + rng(s, 160 + i) * 0.28;
+      sp.position.set(Math.cos(a) * d, cY - crownR * rngRange(s, 6700 + i, 0.1, 0.4), Math.sin(a) * d);
+      sp.scale.y = rngRange(s, 6800 + i, 0.62, 0.88);
       sp.castShadow = true;
       group.add(sp);
     }
-
-    // Skirt cone connecting crown to trunk (fills the gap)
-    const skirt = new THREE.Mesh(
-      new THREE.ConeGeometry(canopyR * 0.72, mainR * 1.0, 8),
-      foliageMats[2 % foliageMats.length]
-    );
-    skirt.position.y = crownY - mainR * 0.75;
-    skirt.castShadow = true;
-    group.add(skirt);
+    return group;
   }
 
-  return group;
+  // ── STAGE 5: ancient / giant ──────────────────────────────────────────────
+  {
+    const trunk = buildTrunk(trunkH, baseR, tipR, pal.bark, s);
+    group.add(trunk);
+    const rootMat = makeMat(varyColor(pal.bark[0], s, 1));
+    group.add(buildRoots(baseR, 7, rootMat, s));
+
+    const duff = new THREE.Mesh(new THREE.CircleGeometry(baseR * 9, 20), duffMat);
+    duff.rotation.x = -Math.PI / 2;
+    duff.position.y = 0.005;
+    group.add(duff);
+
+    const branchMat = makeMat(varyColor(pal.bark[1], s, 2));
+    const mainBranches = 8 + Math.floor(rng(s, 7000) * 4);
+    const canopyR = 1.1 + t * 1.6;
+
+    for (let i = 0; i < mainBranches; i++) {
+      const a     = (i / mainBranches) * Math.PI * 2 + rngRange(s, 7100 + i, -0.45, 0.45);
+      const bLen  = trunkH * rngRange(s, 7200 + i, 0.50, 0.90);
+      const bTilt = rngRange(s, 7300 + i, 0.65, 1.15);
+      const hFrac = rngRange(s, 7400 + i, 0.42, 0.80);
+      const brnMain = new THREE.Mesh(
+        new THREE.CylinderGeometry(baseR * 0.06, baseR * 0.26, bLen, 7),
+        branchMat
+      );
+      brnMain.position.set(Math.cos(a) * baseR * 1.1, trunkH * hFrac, Math.sin(a) * baseR * 1.1);
+      brnMain.rotation.z =  Math.cos(a) * bTilt;
+      brnMain.rotation.x = -Math.sin(a) * bTilt;
+      brnMain.castShadow = true;
+      group.add(brnMain);
+
+      const endX = Math.cos(a) * (baseR * 1.1 + Math.sin(bTilt) * bLen * 0.55);
+      const endY = trunkH * hFrac + Math.cos(bTilt) * bLen * 0.55;
+      const endZ = Math.sin(a) * (baseR * 1.1 + Math.sin(bTilt) * bLen * 0.55);
+
+      const secN = 2 + Math.floor(rng(s, 7500 + i) * 3);
+      for (let si = 0; si < secN; si++) {
+        const sa  = a + rngRange(s, 7600 + i * 3 + si, -1.0, 1.0);
+        const sL  = bLen * rngRange(s, 7700 + i * 3 + si, 0.30, 0.52);
+        const sTi = bTilt + rngRange(s, 7800 + i * 3 + si, 0.1, 0.5);
+        const sec = new THREE.Mesh(
+          new THREE.CylinderGeometry(baseR * 0.025, baseR * 0.09, sL, 5),
+          branchMat
+        );
+        sec.position.set(
+          endX * rngRange(s, 7900 + i * 3 + si, 0.35, 0.75),
+          endY + rngRange(s, 8000 + i * 3 + si, -0.2, 0.2) * trunkH * 0.06,
+          endZ * rngRange(s, 8100 + i * 3 + si, 0.35, 0.75),
+        );
+        sec.rotation.z =  Math.cos(sa) * sTi;
+        sec.rotation.x = -Math.sin(sa) * sTi;
+        sec.castShadow = true;
+        group.add(sec);
+      }
+
+      const clR = canopyR * rngRange(s, 8200 + i, 0.30, 0.55);
+      group.add(buildLeafCloud(endX, endY, endZ, clR, pal.leaf, s, i + 50));
+    }
+
+    // Massive spreading crown
+    const cY = totalH * 0.80;
+    const crownR = canopyR * 0.75;
+    const center = new THREE.Mesh(
+      new THREE.SphereGeometry(crownR, 9, 7),
+      makeMat(varyColor(pal.leaf[0], s, 10))
+    );
+    center.position.y = cY;
+    center.scale.y = 0.72;
+    center.castShadow = true;
+    group.add(center);
+
+    for (let i = 0; i < 9; i++) {
+      const a  = (i / 9) * Math.PI * 2 + rng(s, 8300 + i) * 0.5;
+      const d  = crownR * rngRange(s, 8400 + i, 0.38, 0.75);
+      const sr = crownR * rngRange(s, 8500 + i, 0.50, 0.80);
+      const sp = new THREE.Mesh(
+        new THREE.SphereGeometry(sr, 7, 6),
+        makeMat(varyColor(pal.leaf[(i + 2) % pal.leaf.length], s, 8600 + i))
+      );
+      sp.position.set(Math.cos(a) * d, cY - crownR * rngRange(s, 8700 + i, 0.08, 0.38), Math.sin(a) * d);
+      sp.scale.y = rngRange(s, 8800 + i, 0.60, 0.85);
+      sp.castShadow = true;
+      group.add(sp);
+    }
+    return group;
+  }
 }
 
-// Vogel spiral positioning for natural forest layout
-function getTreePositions(count: number, spacing = 7.5): Array<[number, number]> {
+// ─── FOREST LAYOUT ────────────────────────────────────────────────────────────
+// Natural forest clustering: groups of trees with varied spacing (4-7 units apart)
+function getForestPositions(count: number): Array<[number, number]> {
   if (count === 0) return [];
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  return Array.from({ length: count }, (_, i) => {
-    if (i === 0) return [0, 0] as [number, number];
-    const r = spacing * Math.sqrt(i);
-    const a = i * golden;
-    return [r * Math.cos(a), r * Math.sin(a)] as [number, number];
-  });
+
+  const positions: Array<[number, number]> = [];
+  const MIN_DIST = 3.5; // minimum spacing between trees
+
+  // First tree at origin area with small jitter
+  positions.push([rngRange(1, 0, -1.0, 1.0), rngRange(1, 1, -1.0, 1.0)]);
+
+  // Build clusters organically
+  const MAX_ATTEMPTS = 40;
+  for (let i = 1; i < count; i++) {
+    let placed = false;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      // Choose a random existing tree to cluster near (weighted toward recent ones for natural spread)
+      const parentIdx = Math.floor(rng(i * 7 + attempt, i * 3) * Math.min(i, 12));
+      const parent = positions[parentIdx];
+
+      // Random direction and natural forest spacing (3.5 to 8 units)
+      const angle = rng(i * 13 + attempt, i * 5) * Math.PI * 2;
+      const dist  = 4.0 + rng(i * 11 + attempt, i * 7) * 4.5;
+      const nx    = parent[0] + Math.cos(angle) * dist + rngRange(i * 9 + attempt, i * 11, -0.8, 0.8);
+      const nz    = parent[1] + Math.sin(angle) * dist + rngRange(i * 7 + attempt, i * 13, -0.8, 0.8);
+
+      // Check minimum distance from all existing trees
+      let ok = true;
+      for (const p of positions) {
+        if (Math.hypot(p[0] - nx, p[1] - nz) < MIN_DIST) { ok = false; break; }
+      }
+      if (ok) {
+        positions.push([nx, nz]);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      // Fallback: place in expanding spiral
+      const r = MIN_DIST * Math.sqrt(i) * 0.7;
+      const a = i * 2.618;
+      positions.push([r * Math.cos(a), r * Math.sin(a)]);
+    }
+  }
+  return positions;
 }
 
-// ── Low-poly walking character ──────────────────────────────────────────────
+// ─── GROUND DETAILS ───────────────────────────────────────────────────────────
+function buildBush(s: number): THREE.Group {
+  const g = new THREE.Group();
+  const count = 3 + Math.floor(rng(s, 0) * 4);
+  const baseHex = [0x1a4a0d, 0x246612, 0x2d7a18, 0x195c0c][Math.floor(rng(s, 99) * 4)];
+  const col = varyColor(baseHex, s, 1);
+  const mat = makeMat(col);
+  for (let i = 0; i < count; i++) {
+    const r  = 0.14 + rng(s, 10 + i) * 0.22;
+    const ox = rngRange(s, 20 + i, -0.28, 0.28);
+    const oz = rngRange(s, 30 + i, -0.28, 0.28);
+    const m  = new THREE.Mesh(new THREE.SphereGeometry(r, 6, 4), mat);
+    m.position.set(ox, r * 0.55, oz);
+    m.scale.y = rngRange(s, 40 + i, 0.60, 0.90);
+    m.castShadow = true;
+    g.add(m);
+  }
+  return g;
+}
+
+function buildRock(s: number): THREE.Group {
+  const g = new THREE.Group();
+  const count = 1 + Math.floor(rng(s, 0) * 3);
+  for (let i = 0; i < count; i++) {
+    const rx  = rngRange(s, 5 + i, 0.09, 0.26);
+    const ry  = rngRange(s, 6 + i, 0.06, 0.16);
+    const rz  = rngRange(s, 7 + i, 0.09, 0.22);
+    const col = varyColor(0x6a6050, s, 8 + i);
+    const m   = new THREE.Mesh(new THREE.SphereGeometry(0.12, 5, 4), makeMat(col));
+    m.position.set(rngRange(s, 10 + i, -0.25, 0.25), ry, rngRange(s, 11 + i, -0.25, 0.25));
+    m.scale.set(rx / 0.12, ry / 0.12, rz / 0.12);
+    m.rotation.y = rng(s, 12 + i) * Math.PI * 2;
+    m.castShadow = true;
+    m.receiveShadow = true;
+    g.add(m);
+  }
+  return g;
+}
+
+function buildFern(s: number): THREE.Group {
+  const g = new THREE.Group();
+  const fronds = 5 + Math.floor(rng(s, 0) * 4);
+  const col = varyColor([0x1d5c14, 0x2b6e1c, 0x226018][Math.floor(rng(s, 1) * 3)], s, 2);
+  const mat = makeMat(col);
+  for (let i = 0; i < fronds; i++) {
+    const a  = (i / fronds) * Math.PI * 2;
+    const fL = 0.18 + rng(s, 10 + i) * 0.18;
+    const f  = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, fL, 3, 5), mat);
+    f.position.set(Math.cos(a) * fL * 0.4, fL * 0.25, Math.sin(a) * fL * 0.4);
+    f.rotation.z =  Math.cos(a) * 0.8;
+    f.rotation.x = -Math.sin(a) * 0.8;
+    f.castShadow = true;
+    g.add(f);
+  }
+  return g;
+}
+
+// ─── PLAYER CHARACTER ─────────────────────────────────────────────────────────
 function buildCharacter(): THREE.Group {
   const group = new THREE.Group();
   group.name = "character";
 
-  const skin  = new THREE.MeshLambertMaterial({ color: 0xffdbac });
-  const shirt = new THREE.MeshLambertMaterial({ color: 0x4a7fd4 });
-  const pants = new THREE.MeshLambertMaterial({ color: 0x2d3a5e });
-  const shoes = new THREE.MeshLambertMaterial({ color: 0x3e2723 });
-  const hair  = new THREE.MeshLambertMaterial({ color: 0x3d2b1f });
+  const skinCol  = 0xf5cba7;
+  const shirtCol = 0x3d6b2f; // forest green shirt
+  const pantsCol = 0x2c3e50;
+  const bootCol  = 0x2c1810;
+  const hairCol  = 0x2c1a0e;
+
+  const skin  = new THREE.MeshLambertMaterial({ color: skinCol });
+  const shirt = new THREE.MeshLambertMaterial({ color: shirtCol });
+  const pants = new THREE.MeshLambertMaterial({ color: pantsCol });
+  const boots = new THREE.MeshLambertMaterial({ color: bootCol });
+  const hair  = new THREE.MeshLambertMaterial({ color: hairCol });
 
   // Head
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), skin);
-  head.position.y = 1.13;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.165, 8, 7), skin);
+  head.position.y = 1.56;
   head.castShadow = true;
   group.add(head);
 
-  // Hair cap (upper hemisphere)
-  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.188, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), hair);
-  hairCap.position.y = 1.16;
-  group.add(hairCap);
+  // Hair
+  const hairMesh = new THREE.Mesh(
+    new THREE.SphereGeometry(0.172, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.55),
+    hair
+  );
+  hairMesh.position.y = 1.59;
+  group.add(hairMesh);
 
-  // Torso
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.50, 0.22), shirt);
-  body.position.y = 0.70;
-  body.castShadow = true;
-  group.add(body);
+  // Neck
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.12, 6), skin);
+  neck.position.y = 1.36;
+  group.add(neck);
+
+  // Torso (slightly tapered)
+  const torsoGeo = new THREE.CylinderGeometry(0.155, 0.175, 0.58, 7);
+  const torso = new THREE.Mesh(torsoGeo, shirt);
+  torso.position.y = 1.01;
+  torso.castShadow = true;
+  group.add(torso);
 
   // Hips
-  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.22), pants);
-  hips.position.y = 0.42;
+  const hips = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.160, 0.20, 7), pants);
+  hips.position.y = 0.68;
   group.add(hips);
 
-  // ── Arms (pivot at shoulder so they swing from top) ──
-  const makeArmPivot = (side: number) => {
+  // Arms with forearms
+  const makeArm = (side: number) => {
     const pivot = new THREE.Group();
-    pivot.position.set(side * 0.235, 0.85, 0);
+    pivot.position.set(side * 0.215, 1.25, 0);
     pivot.name = side < 0 ? "leftArmPivot" : "rightArmPivot";
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.40, 0.11), shirt);
-    arm.position.y = -0.20;
-    arm.castShadow = true;
-    pivot.add(arm);
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), skin);
-    hand.position.y = -0.42;
-    pivot.add(hand);
-    group.add(pivot);
-    return pivot;
-  };
-  makeArmPivot(-1);
-  makeArmPivot(1);
 
-  // ── Legs (pivot at hip so they swing from top) ──
-  const makeLegPivot = (side: number) => {
-    const pivot = new THREE.Group();
-    pivot.position.set(side * 0.10, 0.42, 0);
-    pivot.name = side < 0 ? "leftLegPivot" : "rightLegPivot";
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.44, 0.12), pants);
-    leg.position.y = -0.22;
-    leg.castShadow = true;
-    pivot.add(leg);
-    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.19), shoes);
-    shoe.position.set(0, -0.47, 0.03);
-    pivot.add(shoe);
+    const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.33, 6), shirt);
+    upper.position.y = -0.165;
+    upper.castShadow = true;
+    pivot.add(upper);
+
+    const elbowPivot = new THREE.Group();
+    elbowPivot.position.y = -0.33;
+    elbowPivot.name = side < 0 ? "leftElbow" : "rightElbow";
+    pivot.add(elbowPivot);
+
+    const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.30, 6), skin);
+    forearm.position.y = -0.15;
+    forearm.castShadow = true;
+    elbowPivot.add(forearm);
+
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.055, 6, 5), skin);
+    hand.position.y = -0.32;
+    elbowPivot.add(hand);
+
     group.add(pivot);
     return pivot;
   };
-  makeLegPivot(-1);
-  makeLegPivot(1);
+  makeArm(-1);
+  makeArm(1);
+
+  // Legs with knees
+  const makeLeg = (side: number) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.085, 0.68, 0);
+    pivot.name = side < 0 ? "leftLegPivot" : "rightLegPivot";
+
+    const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.080, 0.36, 6), pants);
+    thigh.position.y = -0.18;
+    thigh.castShadow = true;
+    pivot.add(thigh);
+
+    const kneePivot = new THREE.Group();
+    kneePivot.position.y = -0.36;
+    kneePivot.name = side < 0 ? "leftKnee" : "rightKnee";
+    pivot.add(kneePivot);
+
+    const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.068, 0.34, 6), pants);
+    shin.position.y = -0.17;
+    shin.castShadow = true;
+    kneePivot.add(shin);
+
+    // Boot
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(0.115, 0.09, 0.20), boots);
+    boot.position.set(0, -0.38, 0.025);
+    kneePivot.add(boot);
+
+    group.add(pivot);
+    return pivot;
+  };
+  makeLeg(-1);
+  makeLeg(1);
 
   return group;
 }
 
+// ─── WEBGL CHECK ──────────────────────────────────────────────────────────────
 function supportsWebGL(): boolean {
   try {
-    const canvas = document.createElement("canvas");
-    return !!(
-      canvas.getContext("webgl") ||
-      canvas.getContext("experimental-webgl")
-    );
-  } catch {
-    return false;
-  }
+    const c = document.createElement("canvas");
+    return !!(c.getContext("webgl") || c.getContext("experimental-webgl"));
+  } catch { return false; }
 }
 
+// ─── DECOR SPECS ──────────────────────────────────────────────────────────────
+interface DecorSpec { type: "bush" | "rock" | "fern"; x: number; z: number; seed: number; rot: number }
+
+function buildDecorSpecs(radius: number, seed: number): DecorSpec[] {
+  const specs: DecorSpec[] = [];
+  const counts = { bush: Math.floor(radius * 1.8), rock: Math.floor(radius * 0.7), fern: Math.floor(radius * 2.2) };
+  const types: Array<"bush" | "rock" | "fern"> = ["bush", "rock", "fern"];
+  let si = 0;
+  for (const type of types) {
+    for (let i = 0; i < counts[type]; i++, si++) {
+      const r = 2 + rng(seed + si, si) * radius;
+      const a = rng(seed + si + 1, si * 2 + 1) * Math.PI * 2;
+      specs.push({
+        type,
+        x: Math.cos(a) * r + rngRange(seed + si, si * 3, -0.5, 0.5),
+        z: Math.sin(a) * r + rngRange(seed + si, si * 3 + 1, -0.5, 0.5),
+        seed: seed * 100 + si,
+        rot: rng(seed + si, si * 5 + 2) * Math.PI * 2,
+      });
+    }
+  }
+  return specs;
+}
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 export default function ForestWorld({ users, onSelectUser, selectedUser, onNearbyUsers }: ForestWorldProps) {
-  const mountRef = useRef<HTMLDivElement>(null);
+  const mountRef     = useRef<HTMLDivElement>(null);
   const [webglError, setWebglError] = useState(false);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const frameRef = useRef(0);
-  const treeGroupsRef = useRef<Map<string, THREE.Group>>(new Map());
+  const sceneRef     = useRef<THREE.Scene | null>(null);
+  const cameraRef    = useRef<THREE.PerspectiveCamera | null>(null);
+  const rendererRef  = useRef<THREE.WebGLRenderer | null>(null);
+  const frameRef     = useRef(0);
+
+  const treeGroupsRef   = useRef<Map<string, THREE.Group>>(new Map());
   const treePositionsRef = useRef<Map<string, THREE.Vector3>>(new Map());
-  const [nameplates, setNameplates] = useState<Array<{ username: string; x: number; y: number; visible: boolean; commits: number; status: string }>>([]);
+  const renderedTreesRef = useRef<Set<string>>(new Set());
+
+  const decorSpecsRef   = useRef<DecorSpec[]>([]);
+  const renderedDecorRef = useRef<Map<number, THREE.Group>>(new Map());
+
+  const [nameplates, setNameplates] = useState<Array<{
+    username: string; x: number; y: number; visible: boolean; commits: number; status: string;
+  }>>([]);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
-  // Keep a stable ref to the callback so the animation loop always gets the latest version
+
   const onNearbyUsersRef = useRef(onNearbyUsers);
   useEffect(() => { onNearbyUsersRef.current = onNearbyUsers; }, [onNearbyUsers]);
   const prevNearbyKeyRef = useRef("");
 
-  // Character state
-  const charRef = useRef({ x: 4, z: 4, angle: 0, walkT: 0, moving: false });
-  const keysRef = useRef<Set<string>>(new Set());
+  const charRef      = useRef({ x: 2, z: 2, angle: 0, walkT: 0, moving: false });
+  const keysRef      = useRef<Set<string>>(new Set());
   const charGroupRef = useRef<THREE.Group | null>(null);
   const [followMode, setFollowMode] = useState(false);
   const followModeRef = useRef(false);
 
-  // Camera state
   const camRef = useRef({
-    theta: 0.4, phi: 1.0, radius: 28,
+    theta: 0.55, phi: 0.98, radius: 26,
     targetX: 0, targetY: 0, targetZ: 0,
     isDragging: false, prevX: 0, prevY: 0, isRight: false,
     panX: 0, panZ: 0,
   });
 
+  const allUsersRef = useRef<typeof users>([]);
+  allUsersRef.current = users;
+
   useEffect(() => {
-    const handleResize = () => setSize({ w: window.innerWidth, h: window.innerHeight });
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
+    const h = () => setSize({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", h);
+    return () => window.removeEventListener("resize", h);
   }, []);
 
   useEffect(() => {
@@ -382,384 +773,448 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
     if (!el) return;
     const isDark = document.documentElement.classList.contains("dark");
 
-    // Scene
+    // ── SCENE ──
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(isDark ? 0x0d1b12 : 0xb8e0c5);
-    scene.fog = new THREE.FogExp2(isDark ? 0x0d1b12 : 0xb8e0c5, 0.010);
+    scene.background = new THREE.Color(isDark ? 0x080f08 : 0x7ec8c8);
+    // Layered fog: subtle atmospheric perspective
+    scene.fog = new THREE.FogExp2(isDark ? 0x0a1a0a : 0x8fd8c0, 0.0055);
     sceneRef.current = scene;
 
-    // Camera
-    const camera = new THREE.PerspectiveCamera(60, size.w / size.h, 0.1, 400);
+    // ── CAMERA ──
+    const camera = new THREE.PerspectiveCamera(62, size.w / size.h, 0.1, 600);
     cameraRef.current = camera;
 
-    // Renderer
+    // ── RENDERER ──
     let renderer: THREE.WebGLRenderer;
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    } catch {
-      setWebglError(true);
-      return;
-    }
+    } catch { setWebglError(true); return; }
     renderer.setSize(size.w, size.h);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = isDark ? 0.85 : 1.1;
     rendererRef.current = renderer;
     el.appendChild(renderer.domElement);
 
-    // Sky hemisphere light
-    const hemi = new THREE.HemisphereLight(isDark ? 0x0a2218 : 0x87ceeb, isDark ? 0x0a1a0a : 0x4caf50, isDark ? 0.6 : 0.9);
+    // ── LIGHTING ──
+    // Sky hemisphere — warm sky, cool mossy ground
+    const hemi = new THREE.HemisphereLight(
+      isDark ? 0x0d2a18 : 0x9fd8e8,
+      isDark ? 0x071207 : 0x3d7a25,
+      isDark ? 0.80 : 1.1
+    );
     scene.add(hemi);
 
-    // Sun directional light
-    const sun = new THREE.DirectionalLight(isDark ? 0xfff0c8 : 0xfff8e7, isDark ? 1.2 : 2.0);
-    sun.position.set(15, 25, 10);
+    // Main directional sun — low angle for warm forest lighting
+    const sun = new THREE.DirectionalLight(isDark ? 0xfff3c8 : 0xfff9e0, isDark ? 1.6 : 2.4);
+    sun.position.set(30, 40, 20);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 0.5;
-    sun.shadow.camera.far = 120;
-    sun.shadow.camera.left = -60;
-    sun.shadow.camera.right = 60;
-    sun.shadow.camera.top = 60;
-    sun.shadow.camera.bottom = -60;
-    sun.shadow.bias = -0.0005;
+    sun.shadow.camera.far = 220;
+    sun.shadow.camera.left   = -100;
+    sun.shadow.camera.right  =  100;
+    sun.shadow.camera.top    =  100;
+    sun.shadow.camera.bottom = -100;
+    sun.shadow.bias = -0.00035;
     scene.add(sun);
 
-    // Fill light
-    const fill = new THREE.DirectionalLight(isDark ? 0x1a3a6a : 0x90caf9, isDark ? 0.4 : 0.35);
-    fill.position.set(-12, 8, -10);
+    // Blue fill from opposite side (sky bounce)
+    const fill = new THREE.DirectionalLight(isDark ? 0x1a3560 : 0xa0c8f0, isDark ? 0.4 : 0.5);
+    fill.position.set(-25, 12, -18);
     scene.add(fill);
 
-    // Ground
-    const groundGeo = new THREE.PlaneGeometry(300, 300, 60, 60);
-    const groundMat = new THREE.MeshLambertMaterial({ color: isDark ? 0x0d2a12 : 0x4caf50 });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
+    // Ambient so shadows stay rich but not pitch black
+    const ambient = new THREE.AmbientLight(isDark ? 0x091409 : 0x88aa88, isDark ? 0.35 : 0.45);
+    scene.add(ambient);
+
+    // ── GROUND ──
+    const groundGeo = new THREE.PlaneGeometry(500, 500, 60, 60);
+    // Slightly undulate vertex heights for organic terrain
+    const posAttr = groundGeo.attributes.position as THREE.BufferAttribute;
+    for (let vi = 0; vi < posAttr.count; vi++) {
+      const gx = posAttr.getX(vi);
+      const gz = posAttr.getZ(vi);
+      const bump = Math.sin(gx * 0.18) * Math.cos(gz * 0.14) * 0.22
+                 + Math.sin(gx * 0.07 + gz * 0.11) * 0.15;
+      posAttr.setY(vi, bump);
+    }
+    groundGeo.computeVertexNormals();
+
+    // Vertex color variation (patches of moss, bare earth, etc.)
+    const vColors = new Float32Array(posAttr.count * 3);
+    const groundBase = isDark ? new THREE.Color(0x0c2210) : new THREE.Color(0x3e8a2e);
+    for (let vi = 0; vi < posAttr.count; vi++) {
+      const gx = posAttr.getX(vi);
+      const gz = posAttr.getZ(vi);
+      const n  = Math.sin(gx * 0.31 + gz * 0.27) * 0.5 + 0.5;
+      const c  = groundBase.clone().offsetHSL(
+        (n - 0.5) * 0.04,
+        (n - 0.5) * 0.10,
+        (n - 0.5) * 0.08
+      );
+      vColors[vi * 3]     = c.r;
+      vColors[vi * 3 + 1] = c.g;
+      vColors[vi * 3 + 2] = c.b;
+    }
+    groundGeo.setAttribute("color", new THREE.BufferAttribute(vColors, 3));
+    const ground = new THREE.Mesh(groundGeo, new THREE.MeshLambertMaterial({ vertexColors: true }));
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // Ground detail: subtle grid lines
-    const gridHelper = new THREE.GridHelper(300, 60, isDark ? 0x1a3a20 : 0x388e3c, isDark ? 0x1a3a20 : 0x388e3c);
-    (gridHelper.material as THREE.Material & { transparent: boolean; opacity: number }).transparent = true;
-    (gridHelper.material as THREE.Material & { transparent: boolean; opacity: number }).opacity = isDark ? 0.15 : 0.18;
-    scene.add(gridHelper);
+    // ── FOREST FLOOR LITTER (texture overlay near center) ──
+    const litterGeo = new THREE.PlaneGeometry(60, 60, 20, 20);
+    const litterCol = isDark ? 0x0f1e0d : 0x4a6e2a;
+    const litter = new THREE.Mesh(
+      litterGeo,
+      new THREE.MeshLambertMaterial({ color: litterCol, transparent: true, opacity: 0.38 })
+    );
+    litter.rotation.x = -Math.PI / 2;
+    litter.position.y = 0.01;
+    litter.receiveShadow = true;
+    scene.add(litter);
 
-    // Pond — offset from center so it doesn't clash with the tallest tree
-    const pondOffset = { x: 8, z: -6 };
-    const pondGeo = new THREE.CircleGeometry(2.2, 32);
-    const pondMat = new THREE.MeshLambertMaterial({ color: isDark ? 0x0d2744 : 0x1565c0, transparent: true, opacity: 0.8 });
+    // ── WATER BODY (small forest pond) ──
+    const pondPos = new THREE.Vector3(12, 0.008, -10);
+    const pondGeo = new THREE.CircleGeometry(4.5, 48);
+    const pondMat = new THREE.MeshLambertMaterial({
+      color: isDark ? 0x0c2240 : 0x1a7ca8,
+      transparent: true, opacity: 0.88
+    });
     const pond = new THREE.Mesh(pondGeo, pondMat);
     pond.rotation.x = -Math.PI / 2;
-    pond.position.set(pondOffset.x, 0.01, pondOffset.z);
+    pond.position.copy(pondPos);
     scene.add(pond);
 
-    const pondRimGeo = new THREE.TorusGeometry(2.25, 0.14, 6, 32);
-    const pondRimMat = new THREE.MeshLambertMaterial({ color: isDark ? 0x1a3a50 : 0x0d47a1 });
-    const pondRim = new THREE.Mesh(pondRimGeo, pondRimMat);
-    pondRim.rotation.x = -Math.PI / 2;
-    pondRim.position.set(pondOffset.x, 0.02, pondOffset.z);
-    scene.add(pondRim);
+    // Shore ring — muddy bank
+    const shore = new THREE.Mesh(
+      new THREE.RingGeometry(4.5, 5.8, 48),
+      new THREE.MeshLambertMaterial({ color: isDark ? 0x0c2015 : 0x2e5e18 })
+    );
+    shore.rotation.x = -Math.PI / 2;
+    shore.position.set(pondPos.x, 0.007, pondPos.z);
+    scene.add(shore);
 
-    // Ambient particles (fireflies / motes)
-    const pfCount = 200;
-    const pfPos = new Float32Array(pfCount * 3);
+    // Shore stones
+    for (let i = 0; i < 14; i++) {
+      const a = (i / 14) * Math.PI * 2;
+      const r = buildRock(i * 991 + 31);
+      r.position.set(pondPos.x + Math.cos(a) * 4.9, 0, pondPos.z + Math.sin(a) * 4.9);
+      r.rotation.y = rng(i, 44) * Math.PI * 2;
+      scene.add(r);
+    }
+
+    // ── PARTICLES (fireflies / dust motes) ──
+    const pfCount = 400;
+    const pfPos   = new Float32Array(pfCount * 3);
     for (let i = 0; i < pfCount; i++) {
-      pfPos[i*3]   = (Math.random() - 0.5) * 60;
-      pfPos[i*3+1] = 0.3 + Math.random() * 4;
-      pfPos[i*3+2] = (Math.random() - 0.5) * 60;
+      pfPos[i * 3]     = rngRange(i, 0, -90, 90);
+      pfPos[i * 3 + 1] = rngRange(i, 1, 0.2, 6.0);
+      pfPos[i * 3 + 2] = rngRange(i, 2, -90, 90);
     }
     const pfGeo = new THREE.BufferGeometry();
     pfGeo.setAttribute("position", new THREE.BufferAttribute(pfPos, 3));
-    const pfMat = new THREE.PointsMaterial({ color: isDark ? 0x80ff80 : 0xffee58, size: 0.08, transparent: true, opacity: isDark ? 0.9 : 0.6 });
-    const particles = new THREE.Points(pfGeo, pfMat);
+    const particles = new THREE.Points(pfGeo, new THREE.PointsMaterial({
+      color: isDark ? 0x88ff88 : 0xffee44,
+      size: isDark ? 0.11 : 0.07,
+      transparent: true,
+      opacity: isDark ? 0.90 : 0.50,
+    }));
     scene.add(particles);
 
-    // Build trees — sort by commits descending so tallest tree lands at center (index 0)
+    // ── TREE POSITIONS ──
     const sortedUsers = [...users].sort((a, b) =>
       (b.stats?.totalCommits ?? 0) - (a.stats?.totalCommits ?? 0)
     );
-    const positions = getTreePositions(sortedUsers.length);
+    const allPositions = getForestPositions(sortedUsers.length);
+
     treeGroupsRef.current.clear();
     treePositionsRef.current.clear();
+    renderedTreesRef.current.clear();
 
     sortedUsers.forEach((u, i) => {
-      const [x, z] = positions[i];
-      const commits = u.stats?.totalCommits ?? 5;
-      const treeStatus = (u.stats?.status ?? "inactive") as keyof typeof STATUS_COLORS;
-      const treeGroup = buildTreeMesh(commits, treeStatus);
-
-      // Ground disc under each tree
-      const baseGeo = new THREE.CylinderGeometry(1.2, 1.2, 0.06, 20);
-      const baseMat = new THREE.MeshLambertMaterial({ color: (STATUS_COLORS[treeStatus] ?? STATUS_COLORS.inactive).ground });
-      const base = new THREE.Mesh(baseGeo, baseMat);
-      base.position.y = 0.03;
-      base.receiveShadow = true;
-      treeGroup.add(base);
-
-      treeGroup.position.set(x, 0, z);
-      treeGroup.userData = { username: u.username, commits };
-      treeGroup.rotation.y = Math.random() * Math.PI * 2;
-
-      scene.add(treeGroup);
-      treeGroupsRef.current.set(u.username, treeGroup);
+      const [x, z] = allPositions[i];
       treePositionsRef.current.set(u.username, new THREE.Vector3(x, 0, z));
     });
 
-    // Auto-fit camera: radius large enough to frame all trees, centred on tallest
-    if (sortedUsers.length > 0) {
-      const tallestPos = positions[0]; // [0,0] — always the center
-      const cam = camRef.current;
-      cam.panX = tallestPos[0];
-      cam.panZ = tallestPos[1];
-      // Furthest tree distance from center → add padding
-      const maxDist = positions.length > 1
-        ? Math.max(...positions.map(([px, pz]) => Math.hypot(px - tallestPos[0], pz - tallestPos[1])))
-        : 0;
-      cam.radius = Math.min(55, Math.max(18, maxDist * 0.6 + 8));
-      cam.phi = 1.05; // slightly top-down view to see the whole forest
-    }
+    const addTreeToScene = (username: string) => {
+      if (renderedTreesRef.current.has(username)) return;
+      const user = sortedUsers.find(u => u.username === username);
+      if (!user) return;
+      const pos = treePositionsRef.current.get(username);
+      if (!pos) return;
 
-    // ── Character ────────────────────────────────────────────────────────────
+      const commits    = user.stats?.totalCommits ?? 5;
+      const treeStatus = user.stats?.status ?? "inactive";
+      const treeGroup  = buildTreeMesh(commits, treeStatus);
+      treeGroup.position.copy(pos);
+      treeGroup.userData = { username, commits };
+      treeGroup.rotation.y = rng(commits, username.charCodeAt(0)) * Math.PI * 2;
+      scene.add(treeGroup);
+      treeGroupsRef.current.set(username, treeGroup);
+      renderedTreesRef.current.add(username);
+    };
+
+    const removeTreeFromScene = (username: string) => {
+      if (!renderedTreesRef.current.has(username)) return;
+      const tg = treeGroupsRef.current.get(username);
+      if (tg) {
+        scene.remove(tg);
+        tg.traverse(obj => {
+          const m = obj as THREE.Mesh;
+          if (m.isMesh) {
+            m.geometry?.dispose();
+            if (Array.isArray(m.material)) m.material.forEach(mat => mat.dispose());
+            else (m.material as THREE.Material)?.dispose();
+          }
+        });
+        treeGroupsRef.current.delete(username);
+      }
+      renderedTreesRef.current.delete(username);
+    };
+
+    // Initial trees in view
+    sortedUsers.forEach(u => {
+      const pos = treePositionsRef.current.get(u.username);
+      if (pos && Math.hypot(pos.x - camRef.current.panX, pos.z - camRef.current.panZ) < 32) {
+        addTreeToScene(u.username);
+      }
+    });
+
+    // ── DECORATIONS ──
+    decorSpecsRef.current = buildDecorSpecs(80, 7);
+    renderedDecorRef.current.clear();
+
+    // ── CHARACTER ──
     const charGroup = buildCharacter();
     charGroup.position.set(charRef.current.x, 0, charRef.current.z);
-    charGroup.rotation.y = charRef.current.angle;
     scene.add(charGroup);
     charGroupRef.current = charGroup;
 
-    // Raycasting for click
+    // ── RAYCASTING ──
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
-
     const onCanvasClick = (e: MouseEvent) => {
       if (Math.abs(e.movementX) > 3 || Math.abs(e.movementY) > 3) return;
       const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      mouse.x = ((e.clientX - rect.left) / rect.width)  *  2 - 1;
+      mouse.y = ((e.clientY - rect.top)  / rect.height) * -2 + 1;
       raycaster.setFromCamera(mouse, camera);
       const meshes: THREE.Mesh[] = [];
-      treeGroupsRef.current.forEach(group => {
-        group.traverse(obj => { if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh); });
-      });
+      treeGroupsRef.current.forEach(grp => grp.traverse(obj => { if ((obj as THREE.Mesh).isMesh) meshes.push(obj as THREE.Mesh); }));
       const hits = raycaster.intersectObjects(meshes, false);
       if (hits.length > 0) {
         let obj: THREE.Object3D | null = hits[0].object;
         while (obj && !obj.userData.username) obj = obj.parent;
-        if (obj?.userData.username) {
-          onSelectUser(obj.userData.username);
-        }
+        if (obj?.userData.username) onSelectUser(obj.userData.username);
       } else {
         onSelectUser(null);
       }
     };
-
     renderer.domElement.addEventListener("click", onCanvasClick);
 
-    // Camera controls
+    // ── CAMERA CONTROLS ──
     const cam = camRef.current;
-    const onMouseDown = (e: MouseEvent) => {
-      cam.isDragging = true;
-      cam.prevX = e.clientX;
-      cam.prevY = e.clientY;
-      cam.isRight = e.button === 2;
-    };
+    const onMouseDown = (e: MouseEvent) => { cam.isDragging = true; cam.prevX = e.clientX; cam.prevY = e.clientY; cam.isRight = e.button === 2; };
     const onMouseMove = (e: MouseEvent) => {
       if (!cam.isDragging) return;
-      const dx = e.clientX - cam.prevX;
-      const dy = e.clientY - cam.prevY;
-      cam.prevX = e.clientX;
-      cam.prevY = e.clientY;
-      if (cam.isRight) {
-        cam.panX -= dx * 0.04;
-        cam.panZ -= dy * 0.04;
-      } else {
-        cam.theta -= dx * 0.008;
-        cam.phi = Math.max(0.15, Math.min(1.45, cam.phi + dy * 0.008));
-      }
+      const dx = e.clientX - cam.prevX, dy = e.clientY - cam.prevY;
+      cam.prevX = e.clientX; cam.prevY = e.clientY;
+      if (cam.isRight) { cam.panX -= dx * 0.04; cam.panZ -= dy * 0.04; }
+      else { cam.theta -= dx * 0.007; cam.phi = Math.max(0.12, Math.min(1.48, cam.phi + dy * 0.007)); }
     };
     const onMouseUp = () => { cam.isDragging = false; };
-    const onWheel = (e: WheelEvent) => {
-      cam.radius = Math.max(5, Math.min(80, cam.radius + e.deltaY * 0.04));
-    };
-    const onContextMenu = (e: Event) => e.preventDefault();
-    const onTouchStart = (e: TouchEvent) => {
-      cam.isDragging = true;
-      cam.prevX = e.touches[0].clientX;
-      cam.prevY = e.touches[0].clientY;
-      cam.isRight = false;
-    };
-    const onTouchMove = (e: TouchEvent) => {
+    const onWheel   = (e: WheelEvent) => { cam.radius = Math.max(4, Math.min(100, cam.radius + e.deltaY * 0.04)); };
+    const onCtxMenu = (e: Event) => e.preventDefault();
+    const onTStart  = (e: TouchEvent) => { cam.isDragging = true; cam.prevX = e.touches[0].clientX; cam.prevY = e.touches[0].clientY; cam.isRight = false; };
+    const onTMove   = (e: TouchEvent) => {
       if (!cam.isDragging) return;
-      const dx = e.touches[0].clientX - cam.prevX;
-      const dy = e.touches[0].clientY - cam.prevY;
-      cam.prevX = e.touches[0].clientX;
-      cam.prevY = e.touches[0].clientY;
-      cam.theta -= dx * 0.01;
-      cam.phi = Math.max(0.15, Math.min(1.45, cam.phi + dy * 0.01));
+      const dx = e.touches[0].clientX - cam.prevX, dy = e.touches[0].clientY - cam.prevY;
+      cam.prevX = e.touches[0].clientX; cam.prevY = e.touches[0].clientY;
+      cam.theta -= dx * 0.010; cam.phi = Math.max(0.12, Math.min(1.48, cam.phi + dy * 0.010));
     };
-    const onTouchEnd = () => { cam.isDragging = false; };
-
+    const onTEnd = () => { cam.isDragging = false; };
     renderer.domElement.addEventListener("mousedown", onMouseDown);
-    renderer.domElement.addEventListener("contextmenu", onContextMenu);
+    renderer.domElement.addEventListener("contextmenu", onCtxMenu);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     window.addEventListener("wheel", onWheel, { passive: true });
-    renderer.domElement.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
-    window.addEventListener("touchend", onTouchEnd);
+    renderer.domElement.addEventListener("touchstart", onTStart, { passive: true });
+    window.addEventListener("touchmove", onTMove, { passive: true });
+    window.addEventListener("touchend", onTEnd);
 
-    // ── Keyboard for character movement ──────────────────────────────────────
+    // ── KEYBOARD ──
     const onKeyDown = (e: KeyboardEvent) => {
-      if (["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"].includes(e.key.toLowerCase())) {
+      const k = e.key.toLowerCase();
+      if (["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"].includes(k)) {
         e.preventDefault();
-        keysRef.current.add(e.key.toLowerCase());
-        if (!followModeRef.current) {
-          followModeRef.current = true;
-          setFollowMode(true);
-        }
+        keysRef.current.add(k);
+        if (!followModeRef.current) { followModeRef.current = true; setFollowMode(true); }
       }
     };
     const onKeyUp = (e: KeyboardEvent) => { keysRef.current.delete(e.key.toLowerCase()); };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
 
-    // Animate
-    let t = 0;
+    // ── ANIMATION LOOP ──
+    let animT = 0;
     const tmpVec = new THREE.Vector3();
     const screenVec = new THREE.Vector3();
-    // Smooth follow camera target (lerped each frame)
-    const followCam = { x: 0, y: 8, z: -12, lx: 0, lz: 0 };
+    const followCam = { x: 0, y: 6, z: 0, lx: 0, lz: 0 };
+    let lastStreamX = 0, lastStreamZ = 0;
+    const UNLOAD_BUFFER = 22;
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
-      t += 0.012;
-      const dt = 0.016; // ~60fps assumed
+      animT += 0.012;
+      const dt = 0.016;
 
-      // ── Character movement ──────────────────────────────────────────────────
-      const ch = charRef.current;
+      // Character movement
+      const ch   = charRef.current;
       const keys = keysRef.current;
-      const SPEED = 8;
-      const ROT_SPEED = 2.5;
-
-      let moveX = 0, moveZ = 0;
-      if (keys.has("w") || keys.has("arrowup"))    { moveX += Math.sin(ch.angle); moveZ += Math.cos(ch.angle); }
-      if (keys.has("s") || keys.has("arrowdown"))  { moveX -= Math.sin(ch.angle); moveZ -= Math.cos(ch.angle); }
-      if (keys.has("a") || keys.has("arrowleft"))  ch.angle += ROT_SPEED * dt;
-      if (keys.has("d") || keys.has("arrowright")) ch.angle -= ROT_SPEED * dt;
-
-      ch.moving = moveX !== 0 || moveZ !== 0;
-      if (ch.moving) {
-        ch.x += moveX * SPEED * dt;
-        ch.z += moveZ * SPEED * dt;
-        ch.walkT += dt * 8;
-      }
+      const SPEED = 7.5, ROT = 2.8;
+      let mx = 0, mz = 0;
+      if (keys.has("w") || keys.has("arrowup"))    { mx +=  Math.sin(ch.angle); mz +=  Math.cos(ch.angle); }
+      if (keys.has("s") || keys.has("arrowdown"))  { mx += -Math.sin(ch.angle); mz += -Math.cos(ch.angle); }
+      if (keys.has("a") || keys.has("arrowleft"))   ch.angle += ROT * dt;
+      if (keys.has("d") || keys.has("arrowright"))  ch.angle -= ROT * dt;
+      ch.moving = mx !== 0 || mz !== 0;
+      if (ch.moving) { ch.x += mx * SPEED * dt; ch.z += mz * SPEED * dt; ch.walkT += dt * 9; }
 
       if (charGroupRef.current) {
         charGroupRef.current.position.set(ch.x, 0, ch.z);
         charGroupRef.current.rotation.y = ch.angle;
-
-        // Limb swing animation
-        const swing = ch.moving ? Math.sin(ch.walkT) * 0.55 : 0;
+        const swing = ch.moving ? Math.sin(ch.walkT) * 0.60 : 0;
         charGroupRef.current.traverse(obj => {
           if (obj.name === "leftLegPivot")  obj.rotation.x =  swing;
           if (obj.name === "rightLegPivot") obj.rotation.x = -swing;
-          if (obj.name === "leftArmPivot")  obj.rotation.x = -swing * 0.7;
-          if (obj.name === "rightArmPivot") obj.rotation.x =  swing * 0.7;
+          if (obj.name === "leftArmPivot")  obj.rotation.x = -swing * 0.65;
+          if (obj.name === "rightArmPivot") obj.rotation.x =  swing * 0.65;
+          if (obj.name === "leftElbow")     obj.rotation.x = swing > 0 ? swing * 0.35 : 0;
+          if (obj.name === "rightElbow")    obj.rotation.x = swing < 0 ? -swing * 0.35 : 0;
         });
-
-        // Body bob when walking
-        charGroupRef.current.position.y = ch.moving ? Math.abs(Math.sin(ch.walkT)) * 0.04 : 0;
+        charGroupRef.current.position.y = ch.moving ? Math.abs(Math.sin(ch.walkT)) * 0.05 : 0;
       }
 
-      // ── Camera ─────────────────────────────────────────────────────────────
+      // Camera
       if (followModeRef.current) {
-        // Follow camera: behind and above the character
-        const behindDist = 6;
-        const heightOff = 4.5;
-        const targetCamX = ch.x - Math.sin(ch.angle) * behindDist;
-        const targetCamZ = ch.z - Math.cos(ch.angle) * behindDist;
-        const lerpSpeed = 0.12;
-        followCam.x += (targetCamX - followCam.x) * lerpSpeed;
-        followCam.y += (heightOff - followCam.y) * lerpSpeed;
-        followCam.z += (targetCamZ - followCam.z) * lerpSpeed;
-        followCam.lx += (ch.x - followCam.lx) * lerpSpeed;
-        followCam.lz += (ch.z - followCam.lz) * lerpSpeed;
+        const behind = 5.5, hOff = 3.8;
+        const tcx = ch.x - Math.sin(ch.angle) * behind;
+        const tcz = ch.z - Math.cos(ch.angle) * behind;
+        const ls  = 0.14;
+        followCam.x  += (tcx - followCam.x) * ls;
+        followCam.y  += (hOff - followCam.y) * ls;
+        followCam.z  += (tcz - followCam.z) * ls;
+        followCam.lx += (ch.x - followCam.lx) * ls;
+        followCam.lz += (ch.z - followCam.lz) * ls;
         camera.position.set(followCam.x, followCam.y, followCam.z);
-        camera.lookAt(followCam.lx, 0.8, followCam.lz);
+        camera.lookAt(followCam.lx, 0.9, followCam.lz);
       } else {
-        // Orbit camera
-        const cx = cam.panX + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta);
-        const cy = cam.radius * Math.cos(cam.phi);
-        const cz = cam.panZ + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta);
-        camera.position.set(cx, cy, cz);
+        camera.position.set(
+          cam.panX + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta),
+          cam.radius * Math.cos(cam.phi),
+          cam.panZ + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta)
+        );
         camera.lookAt(cam.panX, 0, cam.panZ);
       }
 
-      // Gentle tree sway
-      treeGroupsRef.current.forEach((group, username) => {
-        const phase = username.charCodeAt(0) * 0.3;
-        group.rotation.z = Math.sin(t * 0.5 + phase) * 0.018;
+      // Streaming
+      const sOx = followModeRef.current ? ch.x : cam.panX;
+      const sOz = followModeRef.current ? ch.z : cam.panZ;
+      if (Math.hypot(sOx - lastStreamX, sOz - lastStreamZ) > 2.5 || Math.round(animT * 80) % 30 === 0) {
+        lastStreamX = sOx; lastStreamZ = sOz;
+        const SR = followModeRef.current ? 38 : Math.min(cam.radius * 1.25 + 10, 90);
+        const UR = SR + UNLOAD_BUFFER;
+        allUsersRef.current.forEach(u => {
+          const pos = treePositionsRef.current.get(u.username);
+          if (!pos) return;
+          const d = Math.hypot(pos.x - sOx, pos.z - sOz);
+          if (d <= SR) addTreeToScene(u.username);
+          else if (d > UR) removeTreeFromScene(u.username);
+        });
+        const dR = SR * 0.85, dU = dR + UNLOAD_BUFFER;
+        decorSpecsRef.current.forEach((spec, idx) => {
+          const d = Math.hypot(spec.x - sOx, spec.z - sOz);
+          if (d <= dR && !renderedDecorRef.current.has(idx)) {
+            const obj = spec.type === "bush" ? buildBush(spec.seed)
+                      : spec.type === "fern" ? buildFern(spec.seed)
+                      : buildRock(spec.seed);
+            obj.position.set(spec.x, 0, spec.z);
+            obj.rotation.y = spec.rot;
+            scene.add(obj);
+            renderedDecorRef.current.set(idx, obj);
+          } else if (d > dU && renderedDecorRef.current.has(idx)) {
+            const obj = renderedDecorRef.current.get(idx)!;
+            scene.remove(obj);
+            obj.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) { m.geometry?.dispose(); (m.material as THREE.Material)?.dispose(); } });
+            renderedDecorRef.current.delete(idx);
+          }
+        });
+      }
+
+      // Tree sway — naturalistic multi-frequency wind
+      treeGroupsRef.current.forEach((grp, username) => {
+        const ph  = username.charCodeAt(0) * 0.27 + username.charCodeAt(username.length - 1) * 0.19;
+        const amp = 0.008 + Math.sin(ph * 4.1) * 0.004;
+        grp.rotation.z = Math.sin(animT * 0.42 + ph)          * amp
+                       + Math.sin(animT * 1.10 + ph * 1.3)    * amp * 0.3;
+        grp.rotation.x = Math.sin(animT * 0.36 + ph + 1.2)    * amp * 0.45
+                       + Math.sin(animT * 0.88 + ph * 0.9)    * amp * 0.2;
       });
 
       // Firefly drift
-      const pfPositions = particles.geometry.attributes.position as THREE.BufferAttribute;
+      const pfA = particles.geometry.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < pfCount; i++) {
-        pfPositions.array[i*3+1] = 0.3 + 2 * (0.5 + 0.5 * Math.sin(t * 0.4 + i * 0.7));
+        pfA.array[i * 3 + 1] = 0.2 + 3.0 * (0.5 + 0.5 * Math.sin(animT * 0.36 + i * 0.58));
+        pfA.array[i * 3]    += Math.sin(animT * 0.13 + i * 1.4) * 0.003;
+        pfA.array[i * 3 + 2] += Math.cos(animT * 0.11 + i * 0.95) * 0.003;
       }
-      pfPositions.needsUpdate = true;
+      pfA.needsUpdate = true;
 
-      // Highlight selected tree
-      treeGroupsRef.current.forEach((group, username) => {
-        const isSelected = username === selectedUser;
-        group.traverse(obj => {
-          const mesh = obj as THREE.Mesh;
-          if (mesh.isMesh && mesh.material) {
-            const mat = mesh.material as THREE.MeshLambertMaterial;
-            if (isSelected) {
-              mat.emissive = new THREE.Color(0x222200);
-              mat.emissiveIntensity = 0.4 + 0.2 * Math.sin(t * 3);
-            } else {
-              mat.emissive = new THREE.Color(0x000000);
-              mat.emissiveIntensity = 0;
-            }
+      // Selected tree glow
+      treeGroupsRef.current.forEach((grp, username) => {
+        const sel = username === selectedUser;
+        grp.traverse(obj => {
+          const m = obj as THREE.Mesh;
+          if (m.isMesh && m.material) {
+            const mat = m.material as THREE.MeshLambertMaterial;
+            mat.emissive = sel ? new THREE.Color(0x221800) : new THREE.Color(0x000000);
+            mat.emissiveIntensity = sel ? 0.32 + 0.16 * Math.sin(animT * 2.6) : 0;
           }
         });
       });
 
       renderer.render(scene, camera);
 
-      // Proximity check — fire every ~60 frames (~1 s at 60fps)
-      if (Math.round(t * 80) % 60 === 0 && onNearbyUsersRef.current) {
-        // Use character position in follow mode, orbit look-at in orbit mode
-        const originX = followModeRef.current ? charRef.current.x : cam.panX;
-        const originZ = followModeRef.current ? charRef.current.z : cam.panZ;
-        const loadRadius = followModeRef.current ? 28 : Math.max(cam.radius * 0.75, 12);
+      // Proximity check
+      if (Math.round(animT * 80) % 60 === 0 && onNearbyUsersRef.current) {
+        const ox = followModeRef.current ? ch.x : cam.panX;
+        const oz = followModeRef.current ? ch.z : cam.panZ;
+        const lr = followModeRef.current ? 30 : Math.max(cam.radius * 0.75, 14);
         const nearby: string[] = [];
         treePositionsRef.current.forEach((pos, username) => {
-          const dist = Math.hypot(pos.x - originX, pos.z - originZ);
-          if (dist <= loadRadius) nearby.push(username);
+          if (Math.hypot(pos.x - ox, pos.z - oz) <= lr) nearby.push(username);
         });
         const key = [...nearby].sort().join(",");
-        if (key !== prevNearbyKeyRef.current) {
-          prevNearbyKeyRef.current = key;
-          onNearbyUsersRef.current(nearby);
-        }
+        if (key !== prevNearbyKeyRef.current) { prevNearbyKeyRef.current = key; onNearbyUsersRef.current(nearby); }
       }
 
-      // Update HTML nameplates
+      // Nameplates
       const plates: typeof nameplates = [];
       treePositionsRef.current.forEach((pos, username) => {
+        if (!renderedTreesRef.current.has(username)) return;
         const user = users.find(u => u.username === username);
-        const h = user?.stats ? getTreeHeight(user.stats.totalCommits) : 1;
-        tmpVec.set(pos.x, h + 0.8, pos.z);
+        const h    = user?.stats ? getTreeHeight(user.stats.totalCommits) : 1;
+        tmpVec.set(pos.x, h + 1.2, pos.z);
         screenVec.copy(tmpVec).project(camera);
-        const x = (screenVec.x * 0.5 + 0.5) * size.w;
-        const y = (-screenVec.y * 0.5 + 0.5) * size.h;
-        const visible = screenVec.z < 1 && x > 0 && x < size.w && y > 0 && y < size.h;
+        const sx = (screenVec.x * 0.5 + 0.5) * size.w;
+        const sy = (-screenVec.y * 0.5 + 0.5) * size.h;
         plates.push({
-          username,
-          x,
-          y,
-          visible,
+          username, x: sx, y: sy,
+          visible: screenVec.z < 1 && sx > 0 && sx < size.w && sy > 0 && sy < size.h,
           commits: user?.stats?.totalCommits ?? 0,
           status: user?.stats?.status ?? "inactive",
         });
@@ -772,16 +1227,18 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
       cancelAnimationFrame(frameRef.current);
       renderer.domElement.removeEventListener("click", onCanvasClick);
       renderer.domElement.removeEventListener("mousedown", onMouseDown);
-      renderer.domElement.removeEventListener("contextmenu", onContextMenu);
+      renderer.domElement.removeEventListener("contextmenu", onCtxMenu);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
       window.removeEventListener("wheel", onWheel);
-      renderer.domElement.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
-      window.removeEventListener("touchend", onTouchEnd);
+      renderer.domElement.removeEventListener("touchstart", onTStart);
+      window.removeEventListener("touchmove", onTMove);
+      window.removeEventListener("touchend", onTEnd);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
       charGroupRef.current = null;
+      renderedDecorRef.current.clear();
+      decorSpecsRef.current = [];
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
       sceneRef.current = null;
@@ -790,18 +1247,13 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
     };
   }, [users.map(u => u.username + (u.stats?.totalCommits ?? "?")).join("|"), size.w, size.h]);
 
-  // Handle selectedUser highlight reactively
-  useEffect(() => {
-    // handled in animate loop
-  }, [selectedUser]);
-
   const statusDot: Record<string, string> = {
     active: "#22c55e", moderate: "#eab308", occasional: "#f97316", inactive: "#9ca3af",
   };
 
   if (webglError) {
     return (
-      <div data-testid="forest-world-fallback" style={{ position: "relative", width: size.w, height: size.h, background: "linear-gradient(to bottom, #0d2818, #1a4a28)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#fff" }}>
+      <div data-testid="forest-world-fallback" style={{ position: "relative", width: size.w, height: size.h, background: "linear-gradient(to bottom, #0a1f10, #163026)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16, color: "#fff" }}>
         <div style={{ fontSize: 48 }}>🌲</div>
         <div style={{ fontSize: 16, fontWeight: 700 }}>3D Forest requires WebGL</div>
         <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", textAlign: "center", maxWidth: 280 }}>
@@ -825,77 +1277,35 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
 
       {/* Nameplates */}
       {nameplates.filter(p => p.visible).map(p => (
-        <div
-          key={p.username}
-          onClick={() => onSelectUser(p.username)}
-          style={{
-            position: "absolute",
-            left: p.x,
-            top: p.y,
-            transform: "translate(-50%, -100%)",
-            pointerEvents: "auto",
-            cursor: "pointer",
-            userSelect: "none",
-          }}
-        >
-          <div
-            style={{
-              background: p.username === selectedUser
-                ? "rgba(255,255,200,0.96)"
-                : "rgba(0,0,0,0.72)",
-              color: p.username === selectedUser ? "#1a1a00" : "#ffffff",
-              border: p.username === selectedUser ? "1.5px solid #ffd700" : "1px solid rgba(255,255,255,0.2)",
-              borderRadius: 20,
-              padding: "3px 10px 3px 7px",
-              fontSize: 11,
-              fontWeight: 600,
-              fontFamily: "monospace",
-              display: "flex",
-              alignItems: "center",
-              gap: 5,
-              backdropFilter: "blur(6px)",
-              boxShadow: p.username === selectedUser ? "0 0 12px rgba(255,215,0,0.6)" : "0 2px 8px rgba(0,0,0,0.4)",
-              whiteSpace: "nowrap",
-              transition: "all 0.2s",
-            }}
-          >
+        <div key={p.username} onClick={() => onSelectUser(p.username)} style={{ position: "absolute", left: p.x, top: p.y, transform: "translate(-50%, -100%)", pointerEvents: "auto", cursor: "pointer", userSelect: "none" }}>
+          <div style={{
+            background: p.username === selectedUser ? "rgba(255,255,200,0.96)" : "rgba(0,0,0,0.72)",
+            color: p.username === selectedUser ? "#1a1a00" : "#ffffff",
+            border: p.username === selectedUser ? "1.5px solid #ffd700" : "1px solid rgba(255,255,255,0.18)",
+            borderRadius: 20, padding: "3px 10px 3px 7px", fontSize: 11, fontWeight: 600,
+            fontFamily: "monospace", display: "flex", alignItems: "center", gap: 5,
+            backdropFilter: "blur(6px)",
+            boxShadow: p.username === selectedUser ? "0 0 12px rgba(255,215,0,0.6)" : "0 2px 8px rgba(0,0,0,0.4)",
+            whiteSpace: "nowrap", transition: "all 0.2s",
+          }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: statusDot[p.status] ?? "#888", flexShrink: 0, display: "inline-block" }} />
             @{p.username}
           </div>
-          <div style={{ width: 1, height: 8, background: "rgba(255,255,255,0.3)", margin: "0 auto" }} />
+          <div style={{ width: 1, height: 8, background: "rgba(255,255,255,0.28)", margin: "0 auto" }} />
         </div>
       ))}
 
-      {/* Controls hint — bottom centre */}
       {!followMode && (
-        <div style={{
-          position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-          background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)",
-          border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20,
-          padding: "6px 14px", color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: 500,
-          pointerEvents: "none", whiteSpace: "nowrap",
-        }}>
+        <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20, padding: "6px 14px", color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: 500, pointerEvents: "none", whiteSpace: "nowrap" }}>
           Press <kbd style={{ background: "rgba(255,255,255,0.12)", borderRadius: 4, padding: "1px 5px", fontFamily: "monospace" }}>W A S D</kbd> to walk around
         </div>
       )}
 
-      {/* Follow mode badge + exit button */}
       {followMode && (
-        <div style={{
-          position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
-          display: "flex", alignItems: "center", gap: 8,
-          background: "rgba(74,222,128,0.18)", backdropFilter: "blur(8px)",
-          border: "1px solid rgba(74,222,128,0.4)", borderRadius: 20,
-          padding: "6px 14px", color: "#4ade80", fontSize: 11, fontWeight: 600,
-          whiteSpace: "nowrap",
-        }}>
+        <div style={{ position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 8, background: "rgba(74,222,128,0.18)", backdropFilter: "blur(8px)", border: "1px solid rgba(74,222,128,0.4)", borderRadius: 20, padding: "6px 14px", color: "#4ade80", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}>
           <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
           Walking — <kbd style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, padding: "1px 5px", fontFamily: "monospace" }}>WASD</kbd> to move
-          <button
-            data-testid="button-exit-follow"
-            onClick={() => { followModeRef.current = false; setFollowMode(false); keysRef.current.clear(); }}
-            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, padding: "2px 8px", cursor: "pointer", color: "rgba(255,255,255,0.7)", fontSize: 10, marginLeft: 4 }}
-          >
+          <button data-testid="button-exit-follow" onClick={() => { followModeRef.current = false; setFollowMode(false); keysRef.current.clear(); }} style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, padding: "2px 8px", cursor: "pointer", color: "rgba(255,255,255,0.7)", fontSize: 10, marginLeft: 4 }}>
             Exit
           </button>
         </div>
