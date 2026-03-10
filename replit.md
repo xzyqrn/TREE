@@ -1,33 +1,39 @@
 # GitForest
 
-A GitHub developer visualization web app that displays developers as trees — more commits means a taller, denser tree.
+A full-screen open world 3D GitHub developer visualization. Each developer is a tree — more commits means a taller, denser, more mature tree. All trees live together in a shared 3D forest world.
 
 ## Features
-- **Tree Visualization**: SVG trees with 5 stages (Seedling → Sapling → Young → Mature → Ancient) based on commit count
-- **User Stats**: Shows commits, active days, stars, followers, repos, languages, last active date
-- **Activity Status**: active / moderate / occasional / inactive based on last push date
-- **Add/Remove**: Track any public GitHub username
-- **Dark Mode**: System-aware with manual toggle
-- **Tree Sway Animation**: Trees animate on hover
+- **Open World 3D Forest**: Full-screen Three.js WebGL scene — one forest, all developers together
+- **Tree Stages**: 5 stages driven by estimated commit count:
+  - 🌱 Seedling (< 20 commits): tiny sapling
+  - 🌿 Sapling (20–79): small tree with 2 layers
+  - 🌲 Young Tree (80–199): medium tree with 3 cone layers
+  - 🌳 Mature (200–499): tall tree with 5 layers + branches
+  - 🏔️ Ancient (500+): massive tree with 7 layers + golden particles
+- **Orbital Camera**: Left-drag to orbit, scroll to zoom, right-drag to pan
+- **Floating Nameplates**: HTML labels hover above each tree, color-coded by status
+- **Click to Inspect**: Click any tree to see a glass info panel with full GitHub stats
+- **Activity Status**: active / moderate / occasional / inactive (based on last push date)
+- **Add/Remove Devs**: Add any public GitHub username, trees grow into the world
+- **Dark Mode**: Atmospheric nighttime forest with firefly particles
+- **WebGL Fallback**: Card-based fallback for browsers without WebGL support
+- **Staggered API Loading**: Stats load 1.2s apart to avoid GitHub rate limits
 
 ## Architecture
-- **Frontend**: React + TypeScript + TanStack Query + Wouter routing + Tailwind CSS + shadcn/ui
-- **Backend**: Express.js with GitHub API proxy (avoids CORS, optionally uses GITHUB_TOKEN)
-- **Storage**: In-memory (MemStorage) — no database needed, seeds 5 famous devs on start
+- **Frontend**: React + TypeScript + Three.js (raw WebGL) + TanStack Query + Wouter
+- **Backend**: Express.js with GitHub API proxy and 10-minute cache
+- **Storage**: In-memory (MemStorage) — seeds 5 famous devs on start
 
-## Default Tracked Users
+## Key Components
+- `client/src/components/ForestWorld.tsx` — Full Three.js 3D scene with all trees, lights, camera controls, raycasting, nameplate projection
+- `client/src/pages/Home.tsx` — Glass overlay UI (header, add panel, user info panel, legend, controls hint)
+- `server/routes.ts` — GitHub API proxy with 10-min in-memory cache
+
+## Default Users
 torvalds, gaearon, yyx990803, sindresorhus, addyosmani
 
 ## Environment Variables
-- `GITHUB_TOKEN` (optional): GitHub personal access token to increase API rate limits
-
-## Key Files
-- `client/src/components/GitTree.tsx` — SVG tree generator (5 stages, status-aware colors)
-- `client/src/components/UserCard.tsx` — User card with tree, stats, languages
-- `client/src/pages/Home.tsx` — Main dashboard, add/search users
-- `server/routes.ts` — GitHub API proxy, CRUD for tracked users
-- `server/storage.ts` — In-memory tracked user list
-- `shared/schema.ts` — Zod schemas for GitHub user types
+- `GITHUB_TOKEN` (optional): Increases GitHub API rate limit from 60/hr → 5,000/hr
 
 ## Running
-`npm run dev` — starts Express (backend) + Vite (frontend) on the same port
+`npm run dev` — starts Express (port 5000) + Vite on the same port

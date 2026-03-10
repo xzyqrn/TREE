@@ -1,56 +1,70 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { TrackedUser } from "@shared/schema";
-import UserCard from "@/components/UserCard";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
+import { TrackedUser, UserStats } from "@shared/schema";
+import ForestWorld from "@/components/ForestWorld";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import {
-  Plus, TreePine, Search, Github, Leaf, Wind,
-  Users, GitCommit, Star, Sparkles, Moon, Sun
+  Plus, Github, TreePine, X, ExternalLink, GitCommit,
+  Star, Users, Activity, Code2, MapPin, Calendar,
+  GitFork, Sun, Moon, Trash2, MousePointer2
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
 
-function ForestBackground() {
-  return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden="true">
-      <div className="absolute inset-0 bg-gradient-to-b from-sky-50/60 via-background to-background dark:from-sky-950/20 dark:via-background dark:to-background" />
-      <div className="absolute bottom-0 left-0 right-0 h-32 opacity-10">
-        {[...Array(20)].map((_, i) => (
-          <div
-            key={i}
-            className="absolute bottom-0 inline-block"
-            style={{
-              left: `${(i / 20) * 100 + Math.sin(i * 1.7) * 2}%`,
-              opacity: 0.4 + Math.random() * 0.6,
-            }}
-          >
-            <svg width={20 + (i % 5) * 6} height={40 + (i % 7) * 12} viewBox="0 0 30 60">
-              <polygon points="15,0 0,60 30,60" fill="hsl(var(--primary))" />
-            </svg>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+const langColors: Record<string, string> = {
+  TypeScript: "#3178c6", JavaScript: "#f7df1e", Python: "#3776ab",
+  Go: "#00add8", Rust: "#ce422b", Java: "#007396", "C++": "#f34b7d",
+  C: "#555555", Ruby: "#cc342d", PHP: "#4f5d95", Swift: "#fa7343",
+  Kotlin: "#a97bff", Shell: "#89e051", HTML: "#e34c26", CSS: "#563d7c",
+  Vue: "#41b883", Svelte: "#ff3e00",
+};
+
+const STATUS_META = {
+  active:     { label: "Active",     color: "#22c55e", bg: "rgba(34,197,94,0.15)",   border: "rgba(34,197,94,0.4)" },
+  moderate:   { label: "Moderate",   color: "#eab308", bg: "rgba(234,179,8,0.15)",   border: "rgba(234,179,8,0.4)" },
+  occasional: { label: "Occasional", color: "#f97316", bg: "rgba(249,115,22,0.15)",  border: "rgba(249,115,22,0.4)" },
+  inactive:   { label: "Inactive",   color: "#9ca3af", bg: "rgba(156,163,175,0.15)", border: "rgba(156,163,175,0.35)" },
+};
+
+const STAGE_META = [
+  { max: 19,       icon: "🌱", label: "Seedling" },
+  { max: 79,       icon: "🌿", label: "Sapling" },
+  { max: 199,      icon: "🌲", label: "Young Tree" },
+  { max: 499,      icon: "🌳", label: "Mature" },
+  { max: Infinity, icon: "🏔️", label: "Ancient" },
+];
+
+function stageFor(commits: number) {
+  return STAGE_META.find(s => commits <= s.max) ?? STAGE_META[STAGE_META.length - 1];
 }
 
-function HeroStats({ totalUsers, totalCommits, totalStars }: { totalUsers: number; totalCommits: number; totalStars: number }) {
-  return (
-    <div className="flex flex-wrap justify-center gap-6 mb-8">
-      {[
-        { icon: <Users size={16} />, value: totalUsers, label: "Developers" },
-        { icon: <GitCommit size={16} />, value: totalCommits, label: "Total Commits" },
-        { icon: <Star size={16} />, value: totalStars, label: "Total Stars" },
-      ].map(({ icon, value, label }) => (
-        <div key={label} className="flex items-center gap-2 px-4 py-2 rounded-full bg-card border border-border/60 shadow-sm">
-          <span className="text-primary">{icon}</span>
-          <span className="text-sm font-bold text-foreground">{value.toLocaleString()}</span>
-          <span className="text-xs text-muted-foreground">{label}</span>
-        </div>
-      ))}
-    </div>
-  );
+// Individual stats loader — each user gets their own component, staggered by index
+function StatsLoader({ username, index, onLoaded }: { username: string; index: number; onLoaded: (username: string, stats: UserStats) => void }) {
+  const [enabled, setEnabled] = useState(index === 0);
+  useEffect(() => {
+    if (index === 0) return;
+    const timer = setTimeout(() => setEnabled(true), index * 1200);
+    return () => clearTimeout(timer);
+  }, [index]);
+
+  const { data } = useQuery<UserStats>({
+    queryKey: ["/api/users", username, "stats"],
+    queryFn: () =>
+      fetch(`/api/users/${username}/stats`).then(r => {
+        if (!r.ok) return r.json().then(e => Promise.reject(e));
+        return r.json();
+      }),
+    staleTime: 10 * 60 * 1000,
+    gcTime: 15 * 60 * 1000,
+    enabled,
+    retry: (n, err: any) => !err?.error?.includes("rate limit") && n < 2,
+    retryDelay: 3000,
+  });
+
+  useEffect(() => {
+    if (data) onLoaded(username, data);
+  }, [data, username]);
+
+  return null;
 }
 
 function ThemeToggle() {
@@ -64,211 +78,294 @@ function ThemeToggle() {
     <button
       data-testid="button-theme-toggle"
       onClick={toggle}
-      className="fixed top-4 right-4 p-2.5 rounded-full bg-card border border-border shadow-sm hover:bg-accent transition-colors z-50"
-      aria-label="Toggle theme"
+      style={{
+        background: "rgba(0,0,0,0.55)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: "50%",
+        width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", backdropFilter: "blur(8px)", color: dark ? "#fbbf24" : "#bae6fd",
+      }}
     >
-      {dark ? <Sun size={16} className="text-yellow-500" /> : <Moon size={16} className="text-slate-600" />}
+      {dark ? <Sun size={16} /> : <Moon size={16} />}
     </button>
+  );
+}
+
+function Glass({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+  return (
+    <div style={{
+      background: "rgba(0,0,0,0.65)", backdropFilter: "blur(12px)",
+      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 16, color: "#fff", ...style,
+    }}>
+      {children}
+    </div>
   );
 }
 
 export default function Home() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [selectedUser, setSelectedUser] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const [inputValue, setInputValue] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [statsMap, setStatsMap] = useState<Record<string, UserStats>>({});
 
-  const { data: trackedUsers = [], isLoading: loadingUsers } = useQuery<TrackedUser[]>({
-    queryKey: ["/api/users"],
-  });
+  useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "dark") document.documentElement.classList.add("dark");
+    else if (saved === "light") document.documentElement.classList.remove("dark");
+    else if (window.matchMedia("(prefers-color-scheme: dark)").matches) document.documentElement.classList.add("dark");
+  }, []);
+
+  const { data: trackedUsers = [] } = useQuery<TrackedUser[]>({ queryKey: ["/api/users"] });
+
+  const handleStatsLoaded = useCallback((username: string, stats: UserStats) => {
+    setStatsMap(prev => ({ ...prev, [username]: stats }));
+  }, []);
+
+  const forestUsers = trackedUsers.map(u => ({
+    username: u.username,
+    stats: statsMap[u.username] ?? null,
+  }));
+
+  const selectedStats = selectedUser ? (statsMap[selectedUser] ?? null) : null;
 
   const addMutation = useMutation({
     mutationFn: (username: string) => apiRequest("POST", "/api/users", { username }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
       setInputValue("");
-      toast({ title: "User added to your forest! 🌱", description: `@${inputValue} is now growing.` });
+      setShowAdd(false);
+      toast({ title: "🌱 New tree planted!", description: `@${inputValue} joins the forest.` });
     },
     onError: (err: any) => {
-      const msg = err?.error || err?.message || "Failed to add user";
-      toast({ title: "Could not add user", description: msg, variant: "destructive" });
+      toast({ title: "Could not add user", description: err?.error || err?.message || "Failed", variant: "destructive" });
     },
   });
 
   const removeMutation = useMutation({
     mutationFn: (username: string) => apiRequest("DELETE", `/api/users/${username}`),
-    onSuccess: (_, username) => {
+    onSuccess: (_, u) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      toast({ title: "Removed from forest", description: `@${username} was removed.` });
-    },
-    onError: () => {
-      toast({ title: "Failed to remove user", variant: "destructive" });
+      setStatsMap(prev => { const n = { ...prev }; delete n[u]; return n; });
+      if (selectedUser === u) setSelectedUser(null);
+      toast({ title: "Tree removed", description: `@${u} left the forest.` });
     },
   });
 
-  const handleAdd = () => {
-    const val = inputValue.trim().replace(/^@/, "");
-    if (!val) return;
-    addMutation.mutate(val);
-  };
-
-  const filteredUsers = trackedUsers.filter(u =>
-    u.username.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const sm = selectedStats ? (STATUS_META[selectedStats.status] ?? STATUS_META.inactive) : null;
+  const stage = selectedStats ? stageFor(selectedStats.totalCommits) : null;
 
   return (
-    <div className="min-h-screen bg-background relative">
-      <ForestBackground />
-      <ThemeToggle />
+    <div style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
+      {/* Load stats for each user */}
+      {trackedUsers.map((u, i) => (
+        <StatsLoader key={u.username} username={u.username} index={i} onLoaded={handleStatsLoaded} />
+      ))}
 
-      <div className="relative z-10 max-w-7xl mx-auto px-4 py-10">
-        {/* Header */}
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-medium mb-4">
-            <Sparkles size={12} />
-            GitHub Developer Forest
-            <Leaf size={12} />
+      {/* 3D World */}
+      <ForestWorld users={forestUsers} onSelectUser={setSelectedUser} selectedUser={selectedUser} />
+
+      {/* Top bar */}
+      <div style={{ position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 10, display: "flex", alignItems: "center", gap: 10 }}>
+        <Glass style={{ padding: "8px 16px", display: "flex", alignItems: "center", gap: 8 }}>
+          <TreePine size={18} color="#4ade80" />
+          <span style={{ fontWeight: 700, fontSize: 15, letterSpacing: 0.3 }}>GitForest</span>
+          <span style={{ width: 1, height: 16, background: "rgba(255,255,255,0.2)" }} />
+          <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+            {trackedUsers.length} dev{trackedUsers.length !== 1 ? "s" : ""}
+          </span>
+        </Glass>
+      </div>
+
+      {/* Top-right controls */}
+      <div style={{ position: "absolute", top: 16, right: 16, zIndex: 10, display: "flex", gap: 8 }}>
+        <ThemeToggle />
+        <button
+          data-testid="button-open-add"
+          onClick={() => setShowAdd(s => !s)}
+          style={{
+            background: showAdd ? "rgba(74,222,128,0.25)" : "rgba(0,0,0,0.55)",
+            border: "1px solid rgba(74,222,128,0.45)", borderRadius: 20,
+            padding: "6px 14px", display: "flex", alignItems: "center", gap: 6,
+            cursor: "pointer", backdropFilter: "blur(8px)", color: "#4ade80", fontSize: 13, fontWeight: 600,
+          }}
+        >
+          <Plus size={14} /> Add Dev
+        </button>
+      </div>
+
+      {/* Add panel */}
+      {showAdd && (
+        <Glass style={{ position: "absolute", top: 64, right: 16, zIndex: 10, padding: 16, width: 280 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "rgba(255,255,255,0.8)" }}>
+            Plant a new tree 🌱
           </div>
-          <h1 className="text-4xl sm:text-5xl font-bold text-foreground mb-3 tracking-tight">
-            Your Dev{" "}
-            <span className="text-primary relative inline-block">
-              Forest
-              <span className="absolute -top-1 -right-6">🌲</span>
-            </span>
-          </h1>
-          <p className="text-muted-foreground max-w-md mx-auto text-sm leading-relaxed">
-            Watch developers grow into mighty trees. More commits = taller, denser trees.
-            Track your team's contribution ecosystem.
-          </p>
-        </div>
-
-        {/* Hero stats */}
-        {trackedUsers.length > 0 && (
-          <HeroStats
-            totalUsers={trackedUsers.length}
-            totalCommits={0}
-            totalStars={0}
-          />
-        )}
-
-        {/* Add user panel */}
-        <div className="max-w-lg mx-auto mb-10">
-          <div className="flex gap-2 p-3 rounded-2xl border border-border bg-card shadow-sm">
-            <div className="relative flex-1">
-              <Github size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-              <Input
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ position: "relative", flex: 1 }}>
+              <Github size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.4)", pointerEvents: "none" }} />
+              <input
                 data-testid="input-add-user"
                 value={inputValue}
                 onChange={e => setInputValue(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleAdd()}
-                placeholder="GitHub username (e.g. torvalds)"
-                className="pl-8 bg-background border-border/50 text-sm h-9"
+                onKeyDown={e => e.key === "Enter" && addMutation.mutate(inputValue.trim().replace(/^@/, ""))}
+                placeholder="GitHub username"
+                autoFocus
+                style={{
+                  width: "100%", paddingLeft: 28, paddingRight: 8, paddingTop: 7, paddingBottom: 7,
+                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                  borderRadius: 8, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box",
+                }}
               />
             </div>
-            <Button
+            <button
               data-testid="button-add-user"
-              onClick={handleAdd}
+              onClick={() => { const v = inputValue.trim().replace(/^@/, ""); if (v) addMutation.mutate(v); }}
               disabled={!inputValue.trim() || addMutation.isPending}
-              size="sm"
-              className="gap-1.5 px-4"
+              style={{
+                background: "rgba(74,222,128,0.2)", border: "1px solid rgba(74,222,128,0.5)",
+                borderRadius: 8, padding: "7px 12px", color: "#4ade80", cursor: "pointer",
+                opacity: (!inputValue.trim() || addMutation.isPending) ? 0.5 : 1,
+                fontSize: 13, fontWeight: 600, flexShrink: 0,
+              }}
             >
-              {addMutation.isPending ? (
-                <span className="animate-spin text-sm">⟳</span>
-              ) : (
-                <Plus size={14} />
-              )}
-              Add
-            </Button>
+              {addMutation.isPending ? "…" : "Add"}
+            </button>
           </div>
-          <p className="text-center text-[11px] text-muted-foreground mt-2 flex items-center justify-center gap-1">
-            <Wind size={10} /> Plant a developer in your forest and watch them grow
+          <p style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 8, marginBottom: 0 }}>
+            Uses GitHub's public API · Add GITHUB_TOKEN for higher limits
           </p>
-        </div>
+        </Glass>
+      )}
 
-        {/* Search + label row */}
-        {trackedUsers.length > 0 && (
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-6">
-            <div className="flex items-center gap-2">
-              <TreePine size={16} className="text-primary" />
-              <span className="text-sm font-medium text-foreground">
-                {filteredUsers.length} developer{filteredUsers.length !== 1 ? "s" : ""} in your forest
-              </span>
+      {/* Selected user panel */}
+      {selectedUser && selectedStats && sm && stage && (
+        <Glass style={{
+          position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          zIndex: 10, padding: "16px 20px",
+          minWidth: 340, maxWidth: 520, width: "calc(100vw - 40px)",
+        }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <img src={selectedStats.avatar_url} alt={selectedUser}
+              style={{ width: 50, height: 50, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.2)", flexShrink: 0, objectFit: "cover" }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, fontSize: 15 }}>{selectedStats.name || selectedUser}</span>
+                <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: sm.bg, border: `1px solid ${sm.border}`, color: sm.color, display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: sm.color }} />
+                  {sm.label}
+                </span>
+                <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.18)", color: "rgba(255,255,255,0.75)" }}>
+                  {stage.icon} {stage.label}
+                </span>
+              </div>
+              <a href={selectedStats.html_url} target="_blank" rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", fontFamily: "monospace", display: "inline-flex", alignItems: "center", gap: 3, marginTop: 2 }}>
+                @{selectedStats.login} <ExternalLink size={9} />
+              </a>
+              {selectedStats.bio && (
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", marginTop: 4, lineHeight: 1.5, display: "-webkit-box", WebkitBoxOrient: "vertical" as any, WebkitLineClamp: 2, overflow: "hidden" }}>
+                  {selectedStats.bio}
+                </p>
+              )}
             </div>
-            <div className="relative w-full sm:w-52">
-              <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-              <Input
-                data-testid="input-search-users"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Search developers..."
-                className="pl-8 h-8 text-sm bg-card border-border/50"
-              />
+            <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <a href={selectedStats.html_url} target="_blank" rel="noopener noreferrer"
+                style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 8, padding: "5px 8px", color: "rgba(255,255,255,0.65)", display: "flex", alignItems: "center" }}>
+                <Github size={14} />
+              </a>
+              <button onClick={() => removeMutation.mutate(selectedUser)} data-testid={`remove-user-${selectedUser}`}
+                style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: "5px 8px", color: "#f87171", cursor: "pointer", display: "flex", alignItems: "center" }}>
+                <Trash2 size={14} />
+              </button>
+              <button onClick={() => setSelectedUser(null)}
+                style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "5px 8px", color: "rgba(255,255,255,0.5)", cursor: "pointer", display: "flex", alignItems: "center" }}>
+                <X size={14} />
+              </button>
             </div>
           </div>
-        )}
 
-        {/* Legend */}
-        {trackedUsers.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 mb-6 p-3 rounded-xl bg-card/60 border border-border/40">
-            <span className="text-[11px] font-medium text-muted-foreground">Tree stages:</span>
+          {/* Stats */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8, marginTop: 12 }}>
             {[
-              { icon: "🌱", label: "Seedling", range: "< 20" },
-              { icon: "🌿", label: "Sapling", range: "20–79" },
-              { icon: "🌲", label: "Young", range: "80–199" },
-              { icon: "🌳", label: "Mature", range: "200–499" },
-              { icon: "🏔️", label: "Ancient", range: "500+" },
-            ].map(({ icon, label, range }) => (
-              <div key={label} className="flex items-center gap-1 text-[11px] text-muted-foreground">
-                <span>{icon}</span>
-                <span className="font-medium text-foreground/70">{label}</span>
-                <span className="text-muted-foreground/60">({range} commits)</span>
+              { icon: <GitCommit size={12} />, val: selectedStats.totalCommits.toLocaleString(), label: "Commits" },
+              { icon: <Activity size={12} />,  val: selectedStats.activeDays.toLocaleString(),   label: "Active days" },
+              { icon: <Star size={12} />,       val: selectedStats.totalStars.toLocaleString(),   label: "Stars" },
+              { icon: <Users size={12} />,      val: selectedStats.followers.toLocaleString(),    label: "Followers" },
+            ].map(({ icon, val, label }) => (
+              <div key={label} style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 4px", textAlign: "center" }}>
+                <div style={{ color: "rgba(255,255,255,0.4)", display: "flex", justifyContent: "center", marginBottom: 3 }}>{icon}</div>
+                <div style={{ fontWeight: 700, fontSize: 14, lineHeight: 1 }}>{val}</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.38)", marginTop: 2 }}>{label}</div>
               </div>
             ))}
           </div>
-        )}
 
-        {/* Grid */}
-        {loadingUsers ? (
-          <div className="flex items-center justify-center py-20">
-            <div className="flex flex-col items-center gap-3 text-muted-foreground">
-              <div className="text-4xl animate-bounce">🌱</div>
-              <p className="text-sm">Loading your forest...</p>
-            </div>
-          </div>
-        ) : filteredUsers.length === 0 && searchQuery ? (
-          <div className="text-center py-20">
-            <div className="text-5xl mb-4">🔍</div>
-            <p className="text-muted-foreground">No developers match "{searchQuery}"</p>
-          </div>
-        ) : trackedUsers.length === 0 ? (
-          <div className="text-center py-20 flex flex-col items-center gap-4">
-            <div className="text-6xl">🌵</div>
-            <div>
-              <p className="text-lg font-semibold text-foreground mb-1">Your forest is empty</p>
-              <p className="text-sm text-muted-foreground">Add a GitHub username above to plant your first tree</p>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredUsers.map(user => (
-              <UserCard
-                key={user.username}
-                username={user.username}
-                onRemove={(u) => removeMutation.mutate(u)}
-              />
+          {/* Meta + languages */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10, alignItems: "center" }}>
+            {selectedStats.location && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+                <MapPin size={10} /> {selectedStats.location}
+              </span>
+            )}
+            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+              <Code2 size={10} /> {selectedStats.public_repos} repos
+            </span>
+            {selectedStats.lastActive && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+                <Calendar size={10} /> {new Date(selectedStats.lastActive).toLocaleDateString(undefined, { month: "short", year: "numeric" })}
+              </span>
+            )}
+            {selectedStats.totalForks > 0 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.42)" }}>
+                <GitFork size={10} /> {selectedStats.totalForks.toLocaleString()} forks
+              </span>
+            )}
+            {selectedStats.topLanguages.slice(0, 5).map(lang => (
+              <span key={lang} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, padding: "2px 7px", borderRadius: 6, border: "1px solid rgba(255,255,255,0.14)", background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.6)", fontFamily: "monospace" }}>
+                <span style={{ width: 6, height: 6, borderRadius: "50%", background: langColors[lang] || "#888", flexShrink: 0 }} />
+                {lang}
+              </span>
             ))}
           </div>
-        )}
+        </Glass>
+      )}
 
-        {/* Footer */}
-        <div className="text-center mt-16 pb-4">
-          <p className="text-[11px] text-muted-foreground flex items-center justify-center gap-1">
-            <TreePine size={11} className="text-primary" />
-            GitForest — commit counts are estimated from public repository data
-            <TreePine size={11} className="text-primary" />
-          </p>
+      {/* Controls hint */}
+      {trackedUsers.length > 0 && !selectedUser && (
+        <div style={{
+          position: "absolute", bottom: 16, left: "50%", transform: "translateX(-50%)", zIndex: 10,
+          background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20,
+          padding: "5px 16px", fontSize: 11, color: "rgba(255,255,255,0.38)", backdropFilter: "blur(6px)",
+          display: "flex", alignItems: "center", gap: 12, pointerEvents: "none", whiteSpace: "nowrap",
+        }}>
+          <span>🖱 Drag to orbit</span>
+          <span>·</span>
+          <span>⚙ Scroll to zoom</span>
+          <span>·</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <MousePointer2 size={10} /> Click tree to inspect
+          </span>
         </div>
-      </div>
+      )}
+
+      {/* Empty state */}
+      {trackedUsers.length === 0 && (
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", textAlign: "center", zIndex: 10, color: "#fff", pointerEvents: "none" }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>🌿</div>
+          <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Your forest is empty</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>Click "Add Dev" to plant your first tree</div>
+        </div>
+      )}
+
+      {/* Legend */}
+      <Glass style={{ position: "absolute", bottom: 16, right: 16, zIndex: 10, padding: "10px 14px" }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,255,255,0.38)", marginBottom: 6, letterSpacing: 0.5, textTransform: "uppercase" }}>Tree stages</div>
+        {STAGE_META.map(s => (
+          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.65)", marginBottom: 3 }}>
+            <span>{s.icon}</span>
+            <span style={{ fontWeight: 500 }}>{s.label}</span>
+          </div>
+        ))}
+      </Glass>
     </div>
   );
 }
