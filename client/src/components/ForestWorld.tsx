@@ -34,8 +34,14 @@ function commitT(commits: number): number {
   return Math.min(1, Math.log(1 + commits) / Math.log(1 + 1000000));
 }
 
+// Piecewise linear height — each stage band spans a fixed height range
+// so differences within a stage are always clearly visible
 function getTreeHeight(commits: number): number {
-  return 0.55 + commitT(commits) * 5.45;
+  if (commits < 100)    return 0.50 + (commits / 99)               * 0.80; // 0.50 → 1.30
+  if (commits < 1000)   return 1.30 + ((commits - 100)   / 900)    * 1.70; // 1.30 → 3.00
+  if (commits < 10000)  return 3.00 + ((commits - 1000)  / 9000)   * 2.00; // 3.00 → 5.00
+  if (commits < 100000) return 5.00 + ((commits - 10000) / 90000)  * 0.80; // 5.00 → 5.80
+  return 5.80 + Math.min(0.40, Math.log10(commits / 100000) * 0.40);        // 5.80 → 6.20
 }
 
 function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THREE.Group {
