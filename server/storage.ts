@@ -1,37 +1,43 @@
-import { type User, type InsertUser } from "@shared/schema";
+import { type TrackedUser } from "@shared/schema";
 import { randomUUID } from "crypto";
 
-// modify the interface with any CRUD methods
-// you might need
-
 export interface IStorage {
-  getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  getTrackedUsers(): Promise<TrackedUser[]>;
+  addTrackedUser(username: string): Promise<TrackedUser>;
+  removeTrackedUser(username: string): Promise<void>;
+  isTracked(username: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
+  private trackedUsers: Map<string, TrackedUser>;
 
   constructor() {
-    this.users = new Map();
+    this.trackedUsers = new Map();
+    const defaultUsers = ["torvalds", "gaearon", "yyx990803", "sindresorhus", "addyosmani"];
+    defaultUsers.forEach((username) => {
+      const id = randomUUID();
+      const user: TrackedUser = { id, username, addedAt: new Date().toISOString() };
+      this.trackedUsers.set(username.toLowerCase(), user);
+    });
   }
 
-  async getUser(id: string): Promise<User | undefined> {
-    return this.users.get(id);
+  async getTrackedUsers(): Promise<TrackedUser[]> {
+    return Array.from(this.trackedUsers.values());
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async addTrackedUser(username: string): Promise<TrackedUser> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const user: TrackedUser = { id, username: username.toLowerCase(), addedAt: new Date().toISOString() };
+    this.trackedUsers.set(username.toLowerCase(), user);
     return user;
+  }
+
+  async removeTrackedUser(username: string): Promise<void> {
+    this.trackedUsers.delete(username.toLowerCase());
+  }
+
+  async isTracked(username: string): Promise<boolean> {
+    return this.trackedUsers.has(username.toLowerCase());
   }
 }
 
