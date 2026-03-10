@@ -244,7 +244,7 @@ function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THR
 }
 
 // Vogel spiral positioning for natural forest layout
-function getTreePositions(count: number, spacing = 5.5): Array<[number, number]> {
+function getTreePositions(count: number, spacing = 7.5): Array<[number, number]> {
   if (count === 0) return [];
   const golden = Math.PI * (3 - Math.sqrt(5));
   return Array.from({ length: count }, (_, i) => {
@@ -385,11 +385,11 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
     // Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(isDark ? 0x0d1b12 : 0xb8e0c5);
-    scene.fog = new THREE.FogExp2(isDark ? 0x0d1b12 : 0xb8e0c5, 0.022);
+    scene.fog = new THREE.FogExp2(isDark ? 0x0d1b12 : 0xb8e0c5, 0.010);
     sceneRef.current = scene;
 
     // Camera
-    const camera = new THREE.PerspectiveCamera(55, size.w / size.h, 0.1, 200);
+    const camera = new THREE.PerspectiveCamera(60, size.w / size.h, 0.1, 400);
     cameraRef.current = camera;
 
     // Renderer
@@ -515,7 +515,7 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
       const maxDist = positions.length > 1
         ? Math.max(...positions.map(([px, pz]) => Math.hypot(px - tallestPos[0], pz - tallestPos[1])))
         : 0;
-      cam.radius = Math.max(18, maxDist * 1.55 + 8);
+      cam.radius = Math.min(55, Math.max(18, maxDist * 0.6 + 8));
       cam.phi = 1.05; // slightly top-down view to see the whole forest
     }
 
@@ -637,7 +637,7 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
       // ── Character movement ──────────────────────────────────────────────────
       const ch = charRef.current;
       const keys = keysRef.current;
-      const SPEED = 5.5;
+      const SPEED = 8;
       const ROT_SPEED = 2.5;
 
       let moveX = 0, moveZ = 0;
@@ -732,7 +732,7 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
         // Use character position in follow mode, orbit look-at in orbit mode
         const originX = followModeRef.current ? charRef.current.x : cam.panX;
         const originZ = followModeRef.current ? charRef.current.z : cam.panZ;
-        const loadRadius = followModeRef.current ? 18 : Math.max(cam.radius * 0.75, 12);
+        const loadRadius = followModeRef.current ? 28 : Math.max(cam.radius * 0.75, 12);
         const nearby: string[] = [];
         treePositionsRef.current.forEach((pos, username) => {
           const dist = Math.hypot(pos.x - originX, pos.z - originZ);
