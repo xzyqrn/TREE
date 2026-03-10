@@ -40,13 +40,113 @@ export const userStatsSchema = z.object({
   status: z.enum(["active", "moderate", "occasional", "inactive"]),
   lastActive: z.string().nullable(),
   created_at: z.string(),
+  dataSource: z.enum(["live", "estimated"]),
+  notice: z.string().optional(),
+});
+
+export const WORLD_CHUNK_SIZE = 16;
+export const WORLD_CELL_SIZE = 8;
+export const WORLD_RENDER_RADIUS_CHUNKS = 1;
+export const WORLD_PRELOAD_RADIUS_CHUNKS = 1;
+export const WORLD_BOOTSTRAP_RADIUS_CHUNKS = 1;
+export const WORLD_CHUNK_CELL_COUNT = WORLD_CHUNK_SIZE * WORLD_CHUNK_SIZE;
+export const WORLD_CHUNK_SPAN = WORLD_CHUNK_SIZE * WORLD_CELL_SIZE;
+
+export const trackedWorldUserSchema = trackedUserSchema.extend({
+  chunkX: z.number().int(),
+  chunkZ: z.number().int(),
+  cell: z.number().int().min(0).max(WORLD_CHUNK_CELL_COUNT - 1),
+  worldSeed: z.number().int().nonnegative(),
+});
+
+export const worldChunkUserSummarySchema = z.object({
+  username: z.string(),
+  chunkX: z.number().int(),
+  chunkZ: z.number().int(),
+  cell: z.number().int().min(0).max(WORLD_CHUNK_CELL_COUNT - 1),
+  worldSeed: z.number().int().nonnegative(),
+  hasStats: z.boolean(),
+  totalCommitsHint: z.number().optional(),
+  statusHint: userStatsSchema.shape.status.optional(),
+});
+
+export const worldChunkSchema = z.object({
+  cx: z.number().int(),
+  cz: z.number().int(),
+  users: z.array(worldChunkUserSummarySchema),
+});
+
+export const worldChunkResponseSchema = z.object({
+  center: z.object({
+    cx: z.number().int(),
+    cz: z.number().int(),
+  }),
+  radius: z.number().int().nonnegative(),
+  chunks: z.array(worldChunkSchema),
+});
+
+export const worldBootstrapSchema = z.object({
+  trackedCount: z.number().int().nonnegative(),
+  chunkSize: z.number().int().positive(),
+  cellSize: z.number().int().positive(),
+  renderRadiusChunks: z.number().int().nonnegative(),
+  preloadRadiusChunks: z.number().int().nonnegative(),
+  initialChunk: z.object({
+    cx: z.number().int(),
+    cz: z.number().int(),
+  }),
+  initialFocus: z.object({
+    chunkX: z.number().int(),
+    chunkZ: z.number().int(),
+    cell: z.number().int().min(0).max(WORLD_CHUNK_CELL_COUNT - 1),
+  }).nullable(),
+  chunks: z.array(worldChunkSchema),
+});
+
+export const worldUserLocationSchema = z.object({
+  username: z.string(),
+  chunkX: z.number().int(),
+  chunkZ: z.number().int(),
+  cell: z.number().int().min(0).max(WORLD_CHUNK_CELL_COUNT - 1),
 });
 
 export type GithubUser = z.infer<typeof githubUserSchema>;
 export type TrackedUser = z.infer<typeof trackedUserSchema>;
+export type TrackedWorldUser = z.infer<typeof trackedWorldUserSchema>;
 export type UserStats = z.infer<typeof userStatsSchema>;
+export type WorldChunkUserSummary = z.infer<typeof worldChunkUserSummarySchema>;
+export type WorldChunk = z.infer<typeof worldChunkSchema>;
+export type WorldChunkResponse = z.infer<typeof worldChunkResponseSchema>;
+export type WorldBootstrap = z.infer<typeof worldBootstrapSchema>;
+export type WorldUserLocation = z.infer<typeof worldUserLocationSchema>;
 
 export const addUserSchema = z.object({
   username: z.string().min(1).max(39),
 });
 export type AddUser = z.infer<typeof addUserSchema>;
+
+export function chunkKey(cx: number, cz: number) {
+  return `${cx}:${cz}`;
+}
+
+export function cellToGrid(cell: number) {
+  return {
+    x: cell % WORLD_CHUNK_SIZE,
+    z: Math.floor(cell / WORLD_CHUNK_SIZE),
+  };
+}
+
+export function worldPositionForCell(chunkX: number, chunkZ: number, cell: number) {
+  const local = cellToGrid(cell);
+  return {
+    x: ((chunkX * WORLD_CHUNK_SIZE) + local.x + 0.5) * WORLD_CELL_SIZE,
+    z: ((chunkZ * WORLD_CHUNK_SIZE) + local.z + 0.5) * WORLD_CELL_SIZE,
+  };
+}
+
+export function worldChunkForPoint(x: number, z: number) {
+  return {
+    cx: Math.floor(x / WORLD_CHUNK_SPAN),
+    cz: Math.floor(z / WORLD_CHUNK_SPAN),
+  };
+}

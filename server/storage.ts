@@ -1,170 +1,219 @@
-import { type TrackedUser } from "@shared/schema";
 import { randomUUID } from "crypto";
 
+import type { TrackedWorldUser } from "@shared/schema";
+import { WORLD_CHUNK_SIZE, chunkKey } from "@shared/schema";
+import { assignWorldSlot, forEachChunkInRadius, normalizeUsername, slotKey } from "./world-grid";
+
+interface TrackedWorldChunk {
+  cx: number;
+  cz: number;
+  users: TrackedWorldUser[];
+}
+
+export interface WorldChunkWindow {
+  center: {
+    cx: number;
+    cz: number;
+  };
+  radius: number;
+  chunks: TrackedWorldChunk[];
+}
+
 export interface IStorage {
-  getTrackedUsers(): Promise<TrackedUser[]>;
-  addTrackedUser(username: string): Promise<TrackedUser>;
+  getTrackedUsers(): Promise<TrackedWorldUser[]>;
+  getTrackedCount(): Promise<number>;
+  getSuggestedInitialChunk(): Promise<{ cx: number; cz: number }>;
+  getSuggestedInitialFocus(chunk: { cx: number; cz: number }): Promise<{ chunkX: number; chunkZ: number; cell: number } | null>;
+  addTrackedUser(username: string): Promise<TrackedWorldUser>;
   removeTrackedUser(username: string): Promise<void>;
   isTracked(username: string): Promise<boolean>;
+  getTrackedUserLocation(username: string): Promise<TrackedWorldUser | null>;
+  getChunkWindow(cx: number, cz: number, radius: number): Promise<WorldChunkWindow>;
 }
 
 export class MemStorage implements IStorage {
-  private trackedUsers: Map<string, TrackedUser>;
+  private readonly trackedUsers = new Map<string, TrackedWorldUser>();
+  private readonly chunkIndex = new Map<string, TrackedWorldUser[]>();
+  private readonly occupiedSlots = new Set<string>();
+  private static readonly TARGET_USERS_PER_CHUNK = 6;
+  private static readonly MIN_RADIUS_CHUNKS = 1;
+  private static readonly MAX_RADIUS_CHUNKS = 72;
 
   constructor() {
-    this.trackedUsers = new Map();
     const defaultUsers = [
-      // ── Core / OS / Systems ─────────────────────────────────────────────────
-      "torvalds",       // Linux kernel
-      "antirez",        // Redis
-      "gvanrossum",     // Python
-      "matz",           // Ruby
-      "dhh",            // Ruby on Rails
-      "fabpot",         // Symfony / PHP
-      "nikic",          // PHP core / LLVM
-      "BurntSushi",     // Rust tools (ripgrep, etc.)
-      "matklad",        // rust-analyzer
-      "compiler-errors",// Rust compiler
-      // ── JavaScript / Frontend ───────────────────────────────────────────────
-      "gaearon",        // React (Dan Abramov)
-      "yyx990803",      // Vue.js (Evan You)
-      "sindresorhus",   // npm ecosystem
-      "addyosmani",     // Google Chrome DevRel
-      "tj",             // Express, countless Node tools
-      "jeresig",        // jQuery
-      "mrdoob",         // Three.js
-      "jashkenas",      // Backbone, CoffeeScript, Underscore
-      "getify",         // You Don't Know JS
-      "paulirish",      // Chrome DevTools
-      "ryanflorence",   // React Router / Remix
-      "evanw",          // esbuild
-      "nicolo-ribaudo", // Babel
-      "acornjs",        // Acorn JS parser
-      "Rich-Harris",    // Svelte, Rollup
-      "sveltejs",       // (org) Svelte
-      "nickhudkins",    // styled-components
-      "developit",      // Preact (Jason Miller)
-      "mjackson",       // Remix co-creator
-      "kentcdodds",     // Testing Library, Epic React
-      "tannerlinsley",  // TanStack (React Query etc.)
-      "markdalgleish",  // CSS Modules, Braid
-      // ── Build tools / Compilers ─────────────────────────────────────────────
-      "sebmck",         // Babel creator (Sebastian McKenzie)
-      "nicolo-ribaudo", // skip dup — already above
-      "ealush",         // Vest
-      "sokra",          // webpack (Tobias Koppers)
-      "nystudio107",    // Craft CMS / Vite
-      // ── GitHub / DevTools / CLI ─────────────────────────────────────────────
-      "defunkt",        // GitHub co-founder
-      "mojombo",        // GitHub co-founder, Jekyll
-      "pjhyett",        // GitHub co-founder
-      "wycats",         // Bundler, Ember, Cargo
-      "tenderlove",     // Ruby core, Rails
-      "indirect",       // Bundler co-creator
-      // ── Go ──────────────────────────────────────────────────────────────────
-      "bradfitz",       // Go stdlib
-      "griesemer",      // Go language designer
-      "rsc",            // Rob Pike (Go) — small public profile
-      "davecheney",     // Go contributor
-      // ── Python / ML / Data ──────────────────────────────────────────────────
-      "kennethreitz",   // Requests, httpbin
-      "jakubroztocil",  // HTTPie
-      "psf",            // Python Software Foundation
-      "pallets",        // Flask / Jinja2 org
-      "tiangolo",       // FastAPI, SQLModel
-      "karpathy",       // AI / Tesla / OpenAI
-      "fchollet",       // Keras / TensorFlow
-      "huggingface",    // Transformers
-      // ── Rust ────────────────────────────────────────────────────────────────
-      "steveklabnik",   // Rust docs
-      "alexcrichton",   // Rust / Cargo
-      "dtolnay",        // serde, syn, anyhow
-      "burntsushi",     // skip dup — already above as BurntSushi
-      // ── DevOps / Infrastructure ─────────────────────────────────────────────
-      "mitchellh",      // HashiCorp / Vagrant / Go libs
-      "nathanmarz",     // Storm / Cascalog
-      "jpetazzo",       // Docker
-      "crosbymichael",  // Docker core
-      // ── Mobile ──────────────────────────────────────────────────────────────
-      "nicklockwood",   // iOS developer
-      "mattt",          // Alamofire, NSHipster
-      // ── Databases ───────────────────────────────────────────────────────────
-      "neumino",        // RethinkDB
-      "soveran",        // Ohm, Redis tools
-      // ── Documentation / DX ──────────────────────────────────────────────────
-      "prose",          // Prose.io
-      "bkeepers",       // GitHub staff
-      // ── Open-source all-rounders ────────────────────────────────────────────
-      "nicowillis",     // Designer / open-source
-      "substack",       // browserify, many npm packages
-      "feross",         // WebTorrent, StandardJS
-      "juliangruber",   // streams, npm
-      "max-mapper",     // dat project
-      "aheckmann",      // Mongoose, many Node libs
-      "visionmedia",    // (same as tj — skip)
-      "creationix",     // nvm, js.io
-      "isaacs",         // npm founder
-      "mikeal",         // npm, request
-      "bnoordhuis",     // Node.js core
-      "indutny",        // Node.js / crypto
-      "piscisaureus",   // Node.js / libuv
-      "joyent",         // Node.js org
-      // ── Academic / Research ─────────────────────────────────────────────────
-      "jonls",          // scientific tools
-      "JuliaLang",      // Julia language
-      "matplotlib",     // matplotlib org
-      "numpy",          // NumPy org
-      "scipy",          // SciPy org
-      // ── CSS / Design systems ────────────────────────────────────────────────
-      "csswg-drafts",   // CSS Working Group
-      "mdo",            // Bootstrap (Mark Otto)
-      "fat",            // Bootstrap (Jacob Thornton)
-      "necolas",        // normalize.css
-      "stubbornella",   // OOCSS (Nicole Sullivan)
-      // ── Security / Crypto ───────────────────────────────────────────────────
-      "nneonneo",       // CTF / security
-      "taviso",         // Google Project Zero
-      // ── Content / Education ─────────────────────────────────────────────────
-      "wesbos",         // JavaScript educator
-      "stolinski",      // Level Up Tutorials
-      "cassidoo",       // developer advocate
-      "swyx",           // Developer DX / writing
-      "jsjoeio",        // Developer relations
+      "torvalds",
+      "antirez",
+      "gvanrossum",
+      "matz",
+      "dhh",
+      "nikic",
+      "gaearon",
+      "yyx990803",
+      "sindresorhus",
+      "mrdoob",
+      "paulirish",
+      "ryanflorence",
+      "Rich-Harris",
+      "developit",
+      "tannerlinsley",
+      "bradfitz",
+      "tiangolo",
+      "dtolnay",
     ];
 
-    // Deduplicate (lowercase)
-    const seen = new Set<string>();
-    const unique = defaultUsers.filter(u => {
-      const k = u.toLowerCase();
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-
-    unique.forEach((username) => {
-      const id = randomUUID();
-      const user: TrackedUser = { id, username, addedAt: new Date().toISOString() };
-      this.trackedUsers.set(username.toLowerCase(), user);
-    });
+    const syntheticUsers = Math.max(0, parseInt(process.env.GITFOREST_SYNTHETIC_USERS || "0", 10) || 0);
+    this.seedUsers(defaultUsers);
+    if (syntheticUsers > 0) {
+      this.seedUsers(
+        Array.from({ length: syntheticUsers }, (_, index) => `synthetic-dev-${String(index + 1).padStart(5, "0")}`),
+      );
+    }
   }
 
-  async getTrackedUsers(): Promise<TrackedUser[]> {
+  async getTrackedUsers(): Promise<TrackedWorldUser[]> {
     return Array.from(this.trackedUsers.values());
   }
 
-  async addTrackedUser(username: string): Promise<TrackedUser> {
-    const id = randomUUID();
-    const user: TrackedUser = { id, username: username.toLowerCase(), addedAt: new Date().toISOString() };
-    this.trackedUsers.set(username.toLowerCase(), user);
-    return user;
+  async getTrackedCount(): Promise<number> {
+    return this.trackedUsers.size;
+  }
+
+  async getSuggestedInitialChunk(): Promise<{ cx: number; cz: number }> {
+    let best = { cx: 0, cz: 0, count: -1, distance: Number.POSITIVE_INFINITY };
+
+    this.chunkIndex.forEach((users, key) => {
+      const [cxRaw, czRaw] = key.split(":");
+      const cx = Number(cxRaw);
+      const cz = Number(czRaw);
+      const distance = Math.hypot(cx, cz);
+      if (
+        users.length > best.count
+        || (users.length === best.count && distance < best.distance)
+      ) {
+        best = { cx, cz, count: users.length, distance };
+      }
+    });
+
+    return { cx: best.cx, cz: best.cz };
+  }
+
+  async getSuggestedInitialFocus(chunk: { cx: number; cz: number }): Promise<{ chunkX: number; chunkZ: number; cell: number } | null> {
+    const users = this.chunkIndex.get(chunkKey(chunk.cx, chunk.cz)) ?? [];
+    if (users.length === 0) return null;
+
+    const localCenter = (WORLD_CHUNK_SIZE - 1) / 2;
+    const best = [...users].sort((left, right) => {
+      const leftX = left.cell % WORLD_CHUNK_SIZE;
+      const leftZ = Math.floor(left.cell / WORLD_CHUNK_SIZE);
+      const rightX = right.cell % WORLD_CHUNK_SIZE;
+      const rightZ = Math.floor(right.cell / WORLD_CHUNK_SIZE);
+      const leftDistance = Math.hypot(leftX - localCenter, leftZ - localCenter);
+      const rightDistance = Math.hypot(rightX - localCenter, rightZ - localCenter);
+      return leftDistance - rightDistance || left.username.localeCompare(right.username);
+    })[0];
+
+    return {
+      chunkX: best.chunkX,
+      chunkZ: best.chunkZ,
+      cell: best.cell,
+    };
+  }
+
+  async addTrackedUser(username: string): Promise<TrackedWorldUser> {
+    return this.insertTrackedUser(username);
   }
 
   async removeTrackedUser(username: string): Promise<void> {
-    this.trackedUsers.delete(username.toLowerCase());
+    const normalized = normalizeUsername(username);
+    const existing = this.trackedUsers.get(normalized);
+    if (!existing) return;
+
+    this.trackedUsers.delete(normalized);
+    this.occupiedSlots.delete(slotKey(existing.chunkX, existing.chunkZ, existing.cell));
+
+    const key = chunkKey(existing.chunkX, existing.chunkZ);
+    const users = this.chunkIndex.get(key) ?? [];
+    const nextUsers = users.filter((user) => user.username !== normalized);
+    if (nextUsers.length > 0) {
+      this.chunkIndex.set(key, nextUsers);
+    } else {
+      this.chunkIndex.delete(key);
+    }
   }
 
   async isTracked(username: string): Promise<boolean> {
-    return this.trackedUsers.has(username.toLowerCase());
+    return this.trackedUsers.has(normalizeUsername(username));
+  }
+
+  async getTrackedUserLocation(username: string): Promise<TrackedWorldUser | null> {
+    return this.trackedUsers.get(normalizeUsername(username)) ?? null;
+  }
+
+  async getChunkWindow(cx: number, cz: number, radius: number): Promise<WorldChunkWindow> {
+    const chunks: TrackedWorldChunk[] = [];
+
+    forEachChunkInRadius(cx, cz, radius, (chunkX, chunkZ) => {
+      const users = this.chunkIndex.get(chunkKey(chunkX, chunkZ)) ?? [];
+      chunks.push({
+        cx: chunkX,
+        cz: chunkZ,
+        users: [...users].sort((a, b) => a.cell - b.cell),
+      });
+    });
+
+    return {
+      center: { cx, cz },
+      radius,
+      chunks,
+    };
+  }
+
+  private seedUsers(usernames: string[]) {
+    const seen = new Set<string>();
+    usernames.forEach((username) => {
+      const normalized = normalizeUsername(username);
+      if (seen.has(normalized) || this.trackedUsers.has(normalized)) return;
+      seen.add(normalized);
+      this.insertTrackedUser(normalized);
+    });
+  }
+
+  private insertTrackedUser(username: string): TrackedWorldUser {
+    const normalized = normalizeUsername(username);
+    const maxRadiusChunks = this.getRadiusCapForCount(this.trackedUsers.size + 1);
+    const slot = assignWorldSlot(
+      normalized,
+      (chunkX, chunkZ, cell) => this.occupiedSlots.has(slotKey(chunkX, chunkZ, cell)),
+      {
+        minRadiusChunks: MemStorage.MIN_RADIUS_CHUNKS,
+        maxRadiusChunks,
+      },
+    );
+    const trackedUser: TrackedWorldUser = {
+      id: randomUUID(),
+      username: normalized,
+      addedAt: new Date().toISOString(),
+      chunkX: slot.chunkX,
+      chunkZ: slot.chunkZ,
+      cell: slot.cell,
+      worldSeed: slot.worldSeed,
+    };
+
+    this.trackedUsers.set(normalized, trackedUser);
+    this.occupiedSlots.add(slotKey(slot.chunkX, slot.chunkZ, slot.cell));
+
+    const key = chunkKey(slot.chunkX, slot.chunkZ);
+    const users = this.chunkIndex.get(key) ?? [];
+    users.push(trackedUser);
+    this.chunkIndex.set(key, users);
+
+    return trackedUser;
+  }
+
+  private getRadiusCapForCount(count: number) {
+    const requiredChunks = Math.max(1, Math.ceil(count / MemStorage.TARGET_USERS_PER_CHUNK));
+    const radius = Math.ceil(Math.sqrt(requiredChunks / Math.PI));
+    return Math.max(MemStorage.MIN_RADIUS_CHUNKS, Math.min(MemStorage.MAX_RADIUS_CHUNKS, radius));
   }
 }
 

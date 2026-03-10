@@ -1,0 +1,38 @@
+{
+  "hit": {
+    "x": 632,
+    "y": 368,
+    "hoveredUser": "torvalds"
+  },
+  "selected": {
+    "mode": "isometric",
+    "avatar": {
+      "x": 724,
+      "z": -660
+    },
+    "camera": {
+      "x": 724,
+      "z": -660,
+      "zoom": 1.08
+    },
+    "chunk": {
+      "cx": 1,
+      "cz": -2
+    },
+    "selectedUser": "torvalds",
+    "hoveredUser": "torvalds",
+    "loadedChunks": 9,
+    "visibleTrees": 2,
+    "markerTrees": 0,
+    "labels": [
+      {
+        "username": "torvalds",
+        "kind": "selected"
+      },
+      {
+        "username": "bradfitz",
+        "kind": "nearby"
+      }
+    ]
+  }
+}

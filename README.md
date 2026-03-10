@@ -39,12 +39,13 @@
    GITHUB_TOKEN=your_github_personal_access_token
    PORT=5000
    ```
+   `PORT` is optional in development. If it's unset and `5000` is already busy, `npm run dev` now falls forward to the next open local port automatically.
 
 4. **Run the development server**:
    ```bash
    npm run dev
    ```
-   Open [http://localhost:5000](http://localhost:5000) in your browser.
+   Open the URL printed in the terminal. It will usually be [http://localhost:5000](http://localhost:5000) unless that port is already in use.
 
 ## 🛠 Tech Stack
 

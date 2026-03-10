@@ -1,15 +1,71 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { addUserSchema } from "@shared/schema";
+import {
+  WORLD_BOOTSTRAP_RADIUS_CHUNKS,
+  WORLD_CELL_SIZE,
+  WORLD_CHUNK_SIZE,
+  WORLD_PRELOAD_RADIUS_CHUNKS,
+  WORLD_RENDER_RADIUS_CHUNKS,
+  addUserSchema,
+  type UserStats,
+  type WorldChunkResponse,
+  type WorldChunkUserSummary,
+} from "@shared/schema";
+import { normalizeUsername } from "./world-grid";
 
 const GITHUB_API = "https://api.github.com";
+const GITHUB_RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000;
 
 // Simple in-memory cache to reduce API calls
 const cache = new Map<string, { data: any; ts: number }>();
+const statsCache = new Map<string, UserStats>();
 const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+let githubRateLimitedUntil = 0;
+
+function hashUsername(username: string): number {
+  let hash = 0;
+  for (const ch of username.toLowerCase()) {
+    hash = (hash * 31 + ch.charCodeAt(0)) % 100000;
+  }
+  return hash;
+}
+
+function buildRateLimitedStats(username: string) {
+  const hash = hashUsername(username);
+  const estimatedRepos = 6 + (hash % 18);
+  const estimatedCommits = 140 + (hash % 260);
+  const now = new Date().toISOString();
+
+  return {
+    login: username,
+    name: username,
+    avatar_url: `https://github.com/${username}.png`,
+    bio: "GitHub API rate limit reached. Add GITHUB_TOKEN for live stats.",
+    followers: 0,
+    following: 0,
+    public_repos: estimatedRepos,
+    html_url: `https://github.com/${username}`,
+    location: null,
+    company: null,
+    totalCommits: estimatedCommits,
+    activeDays: Math.max(estimatedRepos * 8, Math.floor(estimatedCommits * 0.55)),
+    totalStars: 0,
+    totalForks: 0,
+    topLanguages: [],
+    status: "inactive" as const,
+    lastActive: null,
+    created_at: now,
+    dataSource: "estimated" as const,
+    notice: "GitHub rate limits are active, so these stats are estimated until live data is available again.",
+  };
+}
 
 async function fetchGitHub(path: string) {
+  if (Date.now() < githubRateLimitedUntil) {
+    throw new Error("rate_limit");
+  }
+
   const cached = cache.get(path);
   if (cached && Date.now() - cached.ts < CACHE_TTL) {
     return cached.data;
@@ -26,7 +82,10 @@ async function fetchGitHub(path: string) {
   const res = await fetch(`${GITHUB_API}${path}`, { headers });
   if (!res.ok) {
     if (res.status === 404) throw new Error("User not found");
-    if (res.status === 403 || res.status === 429) throw new Error("rate_limit");
+    if (res.status === 403 || res.status === 429) {
+      githubRateLimitedUntil = Date.now() + GITHUB_RATE_LIMIT_COOLDOWN_MS;
+      throw new Error("rate_limit");
+    }
     throw new Error(`GitHub API error: ${res.status}`);
   }
   const data = await res.json();
@@ -35,6 +94,10 @@ async function fetchGitHub(path: string) {
 }
 
 async function getUserStats(username: string) {
+  if (normalizeUsername(username).startsWith("synthetic-dev-")) {
+    return buildRateLimitedStats(username);
+  }
+
   const user = await fetchGitHub(`/users/${username}`);
 
   let totalCommits = 0;
@@ -42,6 +105,8 @@ async function getUserStats(username: string) {
   let totalForks = 0;
   let activeDays = 0;
   let lastActive: string | null = null;
+  let dataSource: "live" | "estimated" = "live";
+  let notice: string | undefined;
   const languageCounts: Record<string, number> = {};
 
   try {
@@ -74,7 +139,8 @@ async function getUserStats(username: string) {
     }
   } catch (e: any) {
     if (e.message === "rate_limit") {
-      // Degrade gracefully — use public_repos as proxy
+      dataSource = "estimated";
+      notice = "Repository activity is currently estimated because GitHub rate limits are active.";
       totalCommits = user.public_repos * 10;
     }
   }
@@ -123,6 +189,46 @@ async function getUserStats(username: string) {
     status,
     lastActive,
     created_at: user.created_at,
+    dataSource,
+    notice,
+  };
+}
+
+function clampRadius(value: number, fallback = WORLD_PRELOAD_RADIUS_CHUNKS) {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(4, Math.trunc(value)));
+}
+
+function toChunkSummary(username: string): Pick<WorldChunkUserSummary, "hasStats" | "totalCommitsHint" | "statusHint"> {
+  const cached = statsCache.get(normalizeUsername(username));
+  if (!cached) {
+    return { hasStats: false };
+  }
+  return {
+    hasStats: true,
+    totalCommitsHint: cached.totalCommits,
+    statusHint: cached.status,
+  };
+}
+
+async function buildChunkResponse(cx: number, cz: number, radius: number): Promise<WorldChunkResponse> {
+  const window = await storage.getChunkWindow(cx, cz, radius);
+
+  return {
+    center: window.center,
+    radius: window.radius,
+    chunks: window.chunks.map((chunk) => ({
+      cx: chunk.cx,
+      cz: chunk.cz,
+      users: chunk.users.map((user) => ({
+        username: user.username,
+        chunkX: user.chunkX,
+        chunkZ: user.chunkZ,
+        cell: user.cell,
+        worldSeed: user.worldSeed,
+        ...toChunkSummary(user.username),
+      })),
+    })),
   };
 }
 
@@ -179,12 +285,13 @@ export async function registerRoutes(
       const q = (req.query.q as string || "").trim();
       if (!q || q.length < 1) return res.json([]);
       const data = await fetchGitHub(`/search/users?q=${encodeURIComponent(q)}&per_page=8`);
-      const items = (data.items || []).map((u: any) => ({
+      const items = await Promise.all((data.items || []).map(async (u: any) => ({
         login: u.login,
         avatar_url: u.avatar_url,
         html_url: u.html_url,
         type: u.type,
-      }));
+        tracked: await storage.isTracked(u.login),
+      })));
       res.json(items);
     } catch (err: any) {
       if (err.message === "rate_limit") {
@@ -197,16 +304,66 @@ export async function registerRoutes(
   app.get("/api/users/:username/stats", async (req, res) => {
     try {
       const stats = await getUserStats(req.params.username);
+      statsCache.set(normalizeUsername(req.params.username), stats);
       res.json(stats);
     } catch (err: any) {
       if (err.message === "User not found") {
         return res.status(404).json({ error: "GitHub user not found" });
       }
       if (err.message === "rate_limit") {
-        return res.status(429).json({
-          error: "GitHub API rate limit exceeded. Add a GITHUB_TOKEN environment variable to increase limits.",
-        });
+        const fallbackStats = buildRateLimitedStats(req.params.username);
+        statsCache.set(normalizeUsername(req.params.username), fallbackStats);
+        return res.json(fallbackStats);
       }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/world/bootstrap", async (_req, res) => {
+    try {
+      const trackedCount = await storage.getTrackedCount();
+      const initialChunk = await storage.getSuggestedInitialChunk();
+      const initialFocus = await storage.getSuggestedInitialFocus(initialChunk);
+      const chunks = await buildChunkResponse(initialChunk.cx, initialChunk.cz, WORLD_BOOTSTRAP_RADIUS_CHUNKS);
+      res.json({
+        trackedCount,
+        chunkSize: WORLD_CHUNK_SIZE,
+        cellSize: WORLD_CELL_SIZE,
+        renderRadiusChunks: WORLD_RENDER_RADIUS_CHUNKS,
+        preloadRadiusChunks: WORLD_PRELOAD_RADIUS_CHUNKS,
+        initialChunk,
+        initialFocus,
+        chunks: chunks.chunks,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/world/chunks", async (req, res) => {
+    try {
+      const cx = Math.trunc(Number(req.query.cx ?? 0));
+      const cz = Math.trunc(Number(req.query.cz ?? 0));
+      const radius = clampRadius(Number(req.query.radius));
+      res.json(await buildChunkResponse(cx, cz, radius));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/world/users/:username/location", async (req, res) => {
+    try {
+      const trackedUser = await storage.getTrackedUserLocation(req.params.username);
+      if (!trackedUser) {
+        return res.status(404).json({ error: "Tracked user not found" });
+      }
+      res.json({
+        username: trackedUser.username,
+        chunkX: trackedUser.chunkX,
+        chunkZ: trackedUser.chunkZ,
+        cell: trackedUser.cell,
+      });
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });

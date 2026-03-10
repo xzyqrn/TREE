@@ -30,6 +30,16 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 550,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/three")) {
+            return "three-vendor";
+          }
+        },
+      },
+    },
   },
   server: {
     fs: {
