@@ -121,22 +121,6 @@ function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THR
     }
   }
 
-  // ── Ancient golden particles (count also scales with t) ────────────────
-  if (stage === 5) {
-    const n   = Math.round(80 + t * 70);
-    const pos = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) {
-      const ang = Math.random() * Math.PI * 2;
-      const rad = 0.35 + Math.random() * canopyR * 1.35;
-      pos[i*3]   = rad * Math.cos(ang);
-      pos[i*3+1] = totalH * 0.22 + Math.random() * totalH * 0.88;
-      pos[i*3+2] = rad * Math.sin(ang);
-    }
-    const pGeo = new THREE.BufferGeometry();
-    pGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    group.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xffd54f, size: 0.08, transparent: true, opacity: 0.92 })));
-  }
-
   return group;
 }
 
