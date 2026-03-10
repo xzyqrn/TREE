@@ -26,11 +26,11 @@ const STATUS_META = {
 };
 
 const STAGE_META = [
-  { max: 19,       icon: "🌱", label: "Seedling",  range: "< 20" },
-  { max: 79,       icon: "🌿", label: "Sapling",   range: "20–79" },
-  { max: 199,      icon: "🌲", label: "Young Tree", range: "80–199" },
-  { max: 499,      icon: "🌳", label: "Mature",    range: "200–499" },
-  { max: Infinity, icon: "🏔️", label: "Ancient",   range: "500+" },
+  { max: 99,        icon: "🌱", label: "Seedling",   range: "< 100" },
+  { max: 999,       icon: "🌿", label: "Sapling",    range: "< 1K" },
+  { max: 9999,      icon: "🌲", label: "Young Tree", range: "< 10K" },
+  { max: 99999,     icon: "🌳", label: "Mature",     range: "< 100K" },
+  { max: Infinity,  icon: "🏔️", label: "Ancient",    range: "100K+" },
 ];
 
 function stageFor(commits: number) {

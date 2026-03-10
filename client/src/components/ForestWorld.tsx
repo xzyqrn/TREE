@@ -22,16 +22,16 @@ const STATUS_COLORS = {
 
 // Stage used only for color selection & feature unlock thresholds
 function getStage(commits: number) {
-  if (commits < 20)  return 1;
-  if (commits < 80)  return 2;
-  if (commits < 200) return 3;
-  if (commits < 500) return 4;
+  if (commits < 100)    return 1;
+  if (commits < 1000)   return 2;
+  if (commits < 10000)  return 3;
+  if (commits < 100000) return 4;
   return 5;
 }
 
-// Continuous log-scale 0→1 parameter (0 commits → 0, 10000+ commits → 1)
+// Continuous log-scale 0→1 parameter (0 commits → 0, 1000000+ commits → 1)
 function commitT(commits: number): number {
-  return Math.min(1, Math.log(1 + commits) / Math.log(1 + 10000));
+  return Math.min(1, Math.log(1 + commits) / Math.log(1 + 1000000));
 }
 
 function getTreeHeight(commits: number): number {
