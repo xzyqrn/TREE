@@ -360,19 +360,20 @@ export default function ForestWorld({ users, onSelectUser, selectedUser }: Fores
     (gridHelper.material as THREE.Material & { transparent: boolean; opacity: number }).opacity = isDark ? 0.15 : 0.18;
     scene.add(gridHelper);
 
-    // Center pond
-    const pondGeo = new THREE.CircleGeometry(2.5, 32);
+    // Pond — offset from center so it doesn't clash with the tallest tree
+    const pondOffset = { x: 8, z: -6 };
+    const pondGeo = new THREE.CircleGeometry(2.2, 32);
     const pondMat = new THREE.MeshLambertMaterial({ color: isDark ? 0x0d2744 : 0x1565c0, transparent: true, opacity: 0.8 });
     const pond = new THREE.Mesh(pondGeo, pondMat);
     pond.rotation.x = -Math.PI / 2;
-    pond.position.y = 0.01;
+    pond.position.set(pondOffset.x, 0.01, pondOffset.z);
     scene.add(pond);
 
-    const pondRimGeo = new THREE.TorusGeometry(2.55, 0.15, 6, 32);
+    const pondRimGeo = new THREE.TorusGeometry(2.25, 0.14, 6, 32);
     const pondRimMat = new THREE.MeshLambertMaterial({ color: isDark ? 0x1a3a50 : 0x0d47a1 });
     const pondRim = new THREE.Mesh(pondRimGeo, pondRimMat);
     pondRim.rotation.x = -Math.PI / 2;
-    pondRim.position.y = 0.02;
+    pondRim.position.set(pondOffset.x, 0.02, pondOffset.z);
     scene.add(pondRim);
 
     // Ambient particles (fireflies / motes)
@@ -389,14 +390,16 @@ export default function ForestWorld({ users, onSelectUser, selectedUser }: Fores
     const particles = new THREE.Points(pfGeo, pfMat);
     scene.add(particles);
 
-    // Build trees
-    const positions = getTreePositions(users.length);
+    // Build trees — sort by commits descending so tallest tree lands at center (index 0)
+    const sortedUsers = [...users].sort((a, b) =>
+      (b.stats?.totalCommits ?? 0) - (a.stats?.totalCommits ?? 0)
+    );
+    const positions = getTreePositions(sortedUsers.length);
     treeGroupsRef.current.clear();
     treePositionsRef.current.clear();
 
-    users.forEach((u, i) => {
+    sortedUsers.forEach((u, i) => {
       const [x, z] = positions[i];
-      // Build tree: use real stats if available, or placeholder seedling
       const commits = u.stats?.totalCommits ?? 5;
       const treeStatus = (u.stats?.status ?? "inactive") as keyof typeof STATUS_COLORS;
       const treeGroup = buildTreeMesh(commits, treeStatus);
@@ -410,15 +413,27 @@ export default function ForestWorld({ users, onSelectUser, selectedUser }: Fores
       treeGroup.add(base);
 
       treeGroup.position.set(x, 0, z);
-      treeGroup.userData = { username: u.username, commits: commits };
-
-      // Small offset rotation per tree (natural look)
+      treeGroup.userData = { username: u.username, commits };
       treeGroup.rotation.y = Math.random() * Math.PI * 2;
 
       scene.add(treeGroup);
       treeGroupsRef.current.set(u.username, treeGroup);
       treePositionsRef.current.set(u.username, new THREE.Vector3(x, 0, z));
     });
+
+    // Auto-fit camera: radius large enough to frame all trees, centred on tallest
+    if (sortedUsers.length > 0) {
+      const tallestPos = positions[0]; // [0,0] — always the center
+      const cam = camRef.current;
+      cam.panX = tallestPos[0];
+      cam.panZ = tallestPos[1];
+      // Furthest tree distance from center → add padding
+      const maxDist = positions.length > 1
+        ? Math.max(...positions.map(([px, pz]) => Math.hypot(px - tallestPos[0], pz - tallestPos[1])))
+        : 0;
+      cam.radius = Math.max(18, maxDist * 1.55 + 8);
+      cam.phi = 1.05; // slightly top-down view to see the whole forest
+    }
 
     // Raycasting for click
     const raycaster = new THREE.Raycaster();
