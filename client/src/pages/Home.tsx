@@ -26,11 +26,11 @@ const STATUS_META = {
 };
 
 const STAGE_META = [
-  { max: 19,       icon: "🌱", label: "Seedling" },
-  { max: 79,       icon: "🌿", label: "Sapling" },
-  { max: 199,      icon: "🌲", label: "Young Tree" },
-  { max: 499,      icon: "🌳", label: "Mature" },
-  { max: Infinity, icon: "🏔️", label: "Ancient" },
+  { max: 19,       icon: "🌱", label: "Seedling",  range: "< 20" },
+  { max: 79,       icon: "🌿", label: "Sapling",   range: "20–79" },
+  { max: 199,      icon: "🌲", label: "Young Tree", range: "80–199" },
+  { max: 499,      icon: "🌳", label: "Mature",    range: "200–499" },
+  { max: Infinity, icon: "🏔️", label: "Ancient",   range: "500+" },
 ];
 
 function stageFor(commits: number) {
@@ -363,6 +363,7 @@ export default function Home() {
           <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "rgba(255,255,255,0.65)", marginBottom: 3 }}>
             <span>{s.icon}</span>
             <span style={{ fontWeight: 500 }}>{s.label}</span>
+            <span style={{ color: "rgba(255,255,255,0.28)", fontSize: 10, marginLeft: 2 }}>{s.range}</span>
           </div>
         ))}
       </Glass>

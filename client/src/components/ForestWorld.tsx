@@ -20,101 +20,121 @@ const STATUS_COLORS = {
   inactive:   { foliage: [0x7a7a25, 0x969630, 0xaeae38, 0xc6c64a, 0xdede6a], trunk: 0x8d6e63, ground: 0xaaba30 },
 };
 
+// Stage used only for color selection & feature unlock thresholds
 function getStage(commits: number) {
-  if (commits < 20) return 1;
-  if (commits < 80) return 2;
+  if (commits < 20)  return 1;
+  if (commits < 80)  return 2;
   if (commits < 200) return 3;
   if (commits < 500) return 4;
   return 5;
 }
 
+// Continuous log-scale 0→1 parameter (0 commits → 0, 10000+ commits → 1)
+function commitT(commits: number): number {
+  return Math.min(1, Math.log(1 + commits) / Math.log(1 + 10000));
+}
+
 function getTreeHeight(commits: number): number {
-  const s = getStage(commits);
-  return [0.7, 1.3, 2.1, 3.2, 4.8][s - 1];
+  return 0.55 + commitT(commits) * 5.45;
 }
 
 function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THREE.Group {
   const group = new THREE.Group();
-  const stage = getStage(commits);
+  const stage  = getStage(commits);
+  const t      = commitT(commits);                    // 0..1 continuous
   const colors = STATUS_COLORS[status] ?? STATUS_COLORS.inactive;
 
-  const trunkMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
+  // All dimensions scale smoothly with t
+  const totalH   = getTreeHeight(commits);
+  const trunkH   = totalH * 0.40;
+  const trunkR   = 0.055 + t * 0.30;                 // 0.055 → 0.355
+  const layerCnt = Math.max(1, Math.round(1 + t * 7)); // 1 → 8 foliage layers
+  const canopyR  = 0.26 + t * 1.24;                  // 0.26 → 1.5
+
+  const trunkMat  = new THREE.MeshLambertMaterial({ color: colors.trunk });
   const foliageMats = colors.foliage.map(c => new THREE.MeshLambertMaterial({ color: c }));
 
-  const configs = [
-    { trunkH: 0.5, trunkR: 0.07, layers: [{ y: 0.42, r: 0.42, h: 0.58 }] },
-    { trunkH: 0.88, trunkR: 0.1,  layers: [{ y: 0.72, r: 0.6, h: 0.72 }, { y: 0.98, r: 0.42, h: 0.58 }] },
-    { trunkH: 1.35, trunkR: 0.14, layers: [
-      { y: 1.05, r: 0.82, h: 0.88 }, { y: 1.5, r: 0.62, h: 0.75 }, { y: 1.88, r: 0.4, h: 0.6 }] },
-    { trunkH: 1.95, trunkR: 0.21, layers: [
-      { y: 1.5, r: 1.05, h: 0.98 }, { y: 2.05, r: 0.84, h: 0.88 },
-      { y: 2.55, r: 0.62, h: 0.78 }, { y: 2.98, r: 0.4, h: 0.62 }, { y: 3.34, r: 0.24, h: 0.48 }] },
-    { trunkH: 2.65, trunkR: 0.3, layers: [
-      { y: 1.95, r: 1.3, h: 1.08 }, { y: 2.6, r: 1.05, h: 0.98 },
-      { y: 3.14, r: 0.84, h: 0.88 }, { y: 3.62, r: 0.62, h: 0.76 },
-      { y: 4.06, r: 0.44, h: 0.66 }, { y: 4.44, r: 0.28, h: 0.52 }, { y: 4.75, r: 0.17, h: 0.4 }] },
-  ];
-
-  const cfg = configs[stage - 1];
-
-  // Trunk
-  const trunkGeo = new THREE.CylinderGeometry(cfg.trunkR * 0.55, cfg.trunkR, cfg.trunkH, 7);
+  // ── Trunk ──────────────────────────────────────────────────────────────
+  const trunkGeo = new THREE.CylinderGeometry(trunkR * 0.52, trunkR, trunkH, 7);
   const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-  trunk.position.y = cfg.trunkH / 2;
+  trunk.position.y = trunkH / 2;
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   group.add(trunk);
 
-  // Foliage cones
-  cfg.layers.forEach((layer, i) => {
-    const mat = foliageMats[i % foliageMats.length];
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(layer.r, layer.h, 8), mat);
-    cone.position.y = layer.y + layer.h / 2;
-    cone.castShadow = true;
-    group.add(cone);
-
-    if (stage >= 3 && i > 0) {
-      const inner = new THREE.Mesh(
-        new THREE.ConeGeometry(layer.r * 0.8, layer.h * 0.88, 8),
-        foliageMats[(i + 2) % foliageMats.length]
-      );
-      inner.position.y = layer.y + layer.h / 2 - 0.06;
-      inner.rotation.y = Math.PI / 9;
-      group.add(inner);
-    }
-  });
-
-  // Branches on mature/ancient
+  // ── Root flares (mature / ancient only) ────────────────────────────────
   if (stage >= 4) {
-    const branchMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
-    const count = stage === 5 ? 5 : 3;
-    for (let i = 0; i < count; i++) {
-      const angle = (i / count) * Math.PI * 2;
-      const bGeo = new THREE.CylinderGeometry(0.022, 0.048, cfg.trunkH * 0.48, 5);
-      const branch = new THREE.Mesh(bGeo, branchMat);
-      branch.position.set(Math.cos(angle) * cfg.trunkR * 1.8, cfg.trunkH * 0.42 + i * 0.08, Math.sin(angle) * cfg.trunkR * 1.8);
-      branch.rotation.z = 1.1;
-      branch.rotation.y = angle;
-      branch.castShadow = true;
-      group.add(branch);
+    const flareN = stage === 5 ? 5 : 3;
+    for (let i = 0; i < flareN; i++) {
+      const a = (i / flareN) * Math.PI * 2;
+      const fGeo = new THREE.CylinderGeometry(trunkR * 0.08, trunkR * 0.42, trunkH * 0.28, 4);
+      const flare = new THREE.Mesh(fGeo, trunkMat);
+      flare.position.set(Math.cos(a) * trunkR * 0.82, trunkH * 0.14, Math.sin(a) * trunkR * 0.82);
+      flare.rotation.z =  Math.cos(a) * 0.35;
+      flare.rotation.x = -Math.sin(a) * 0.35;
+      group.add(flare);
     }
   }
 
-  // Ancient tree golden particles
+  // ── Foliage layers (stacked cones, wide at base → narrow at top) ───────
+  const foliageBase = trunkH * 0.70;
+  const foliageSpan = totalH - foliageBase;
+  const segs = 6 + stage;  // more segments → rounder silhouette on big trees
+
+  for (let i = 0; i < layerCnt; i++) {
+    const lf = layerCnt === 1 ? 0 : i / (layerCnt - 1); // 0=bottom 1=top
+    const r  = canopyR * (1 - lf * 0.83);
+    const h  = (0.40 + (1 - lf) * 0.60) * (foliageSpan / layerCnt * 1.75);
+    const y  = foliageBase + lf * foliageSpan;
+
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(r, h, segs), foliageMats[i % foliageMats.length]);
+    cone.position.y = y + h * 0.38;
+    cone.castShadow = true;
+    group.add(cone);
+
+    // Inner depth cone for stage 3+
+    if (stage >= 3 && i < layerCnt - 1) {
+      const inner = new THREE.Mesh(
+        new THREE.ConeGeometry(r * 0.76, h * 0.80, segs),
+        foliageMats[(i + 2) % foliageMats.length]
+      );
+      inner.position.y = y + h * 0.30;
+      inner.rotation.y = Math.PI / 8;
+      group.add(inner);
+    }
+  }
+
+  // ── Branches (stage 4+, count scales continuously with t) ──────────────
+  if (stage >= 4) {
+    const branchMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
+    const branchN   = Math.round(3 + t * 5);  // 3 → 8
+    for (let i = 0; i < branchN; i++) {
+      const a    = (i / branchN) * Math.PI * 2 + 0.3;
+      const bLen = trunkH * (0.38 + t * 0.28);
+      const bGeo = new THREE.CylinderGeometry(trunkR * 0.09, trunkR * 0.23, bLen, 5);
+      const b    = new THREE.Mesh(bGeo, branchMat);
+      b.position.set(Math.cos(a) * trunkR * 1.5, trunkH * (0.30 + (i % 3) * 0.10), Math.sin(a) * trunkR * 1.5);
+      b.rotation.z =  Math.cos(a) * 1.12;
+      b.rotation.x = -Math.sin(a) * 1.12;
+      b.castShadow = true;
+      group.add(b);
+    }
+  }
+
+  // ── Ancient golden particles (count also scales with t) ────────────────
   if (stage === 5) {
-    const n = 80;
+    const n   = Math.round(80 + t * 70);
     const pos = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
-      const t = Math.random() * Math.PI * 2;
-      const p = Math.random() * Math.PI;
-      const r = 0.7 + Math.random() * 1.4;
-      pos[i*3]   = r * Math.sin(p) * Math.cos(t);
-      pos[i*3+1] = 2.2 + Math.random() * 2.8;
-      pos[i*3+2] = r * Math.sin(p) * Math.sin(t);
+      const ang = Math.random() * Math.PI * 2;
+      const rad = 0.35 + Math.random() * canopyR * 1.35;
+      pos[i*3]   = rad * Math.cos(ang);
+      pos[i*3+1] = totalH * 0.22 + Math.random() * totalH * 0.88;
+      pos[i*3+2] = rad * Math.sin(ang);
     }
     const pGeo = new THREE.BufferGeometry();
     pGeo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    group.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xffd54f, size: 0.07, transparent: true, opacity: 0.9 })));
+    group.add(new THREE.Points(pGeo, new THREE.PointsMaterial({ color: 0xffd54f, size: 0.08, transparent: true, opacity: 0.92 })));
   }
 
   return group;
