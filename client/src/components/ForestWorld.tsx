@@ -255,6 +255,78 @@ function getTreePositions(count: number, spacing = 5.5): Array<[number, number]>
   });
 }
 
+// ── Low-poly walking character ──────────────────────────────────────────────
+function buildCharacter(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = "character";
+
+  const skin  = new THREE.MeshLambertMaterial({ color: 0xffdbac });
+  const shirt = new THREE.MeshLambertMaterial({ color: 0x4a7fd4 });
+  const pants = new THREE.MeshLambertMaterial({ color: 0x2d3a5e });
+  const shoes = new THREE.MeshLambertMaterial({ color: 0x3e2723 });
+  const hair  = new THREE.MeshLambertMaterial({ color: 0x3d2b1f });
+
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), skin);
+  head.position.y = 1.13;
+  head.castShadow = true;
+  group.add(head);
+
+  // Hair cap (upper hemisphere)
+  const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.188, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2), hair);
+  hairCap.position.y = 1.16;
+  group.add(hairCap);
+
+  // Torso
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.50, 0.22), shirt);
+  body.position.y = 0.70;
+  body.castShadow = true;
+  group.add(body);
+
+  // Hips
+  const hips = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.18, 0.22), pants);
+  hips.position.y = 0.42;
+  group.add(hips);
+
+  // ── Arms (pivot at shoulder so they swing from top) ──
+  const makeArmPivot = (side: number) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.235, 0.85, 0);
+    pivot.name = side < 0 ? "leftArmPivot" : "rightArmPivot";
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.40, 0.11), shirt);
+    arm.position.y = -0.20;
+    arm.castShadow = true;
+    pivot.add(arm);
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(0.075, 6, 5), skin);
+    hand.position.y = -0.42;
+    pivot.add(hand);
+    group.add(pivot);
+    return pivot;
+  };
+  makeArmPivot(-1);
+  makeArmPivot(1);
+
+  // ── Legs (pivot at hip so they swing from top) ──
+  const makeLegPivot = (side: number) => {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.10, 0.42, 0);
+    pivot.name = side < 0 ? "leftLegPivot" : "rightLegPivot";
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.44, 0.12), pants);
+    leg.position.y = -0.22;
+    leg.castShadow = true;
+    pivot.add(leg);
+    const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.08, 0.19), shoes);
+    shoe.position.set(0, -0.47, 0.03);
+    pivot.add(shoe);
+    group.add(pivot);
+    return pivot;
+  };
+  makeLegPivot(-1);
+  makeLegPivot(1);
+
+  return group;
+}
+
 function supportsWebGL(): boolean {
   try {
     const canvas = document.createElement("canvas");
@@ -282,6 +354,13 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
   const onNearbyUsersRef = useRef(onNearbyUsers);
   useEffect(() => { onNearbyUsersRef.current = onNearbyUsers; }, [onNearbyUsers]);
   const prevNearbyKeyRef = useRef("");
+
+  // Character state
+  const charRef = useRef({ x: 4, z: 4, angle: 0, walkT: 0, moving: false });
+  const keysRef = useRef<Set<string>>(new Set());
+  const charGroupRef = useRef<THREE.Group | null>(null);
+  const [followMode, setFollowMode] = useState(false);
+  const followModeRef = useRef(false);
 
   // Camera state
   const camRef = useRef({
@@ -440,6 +519,13 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
       cam.phi = 1.05; // slightly top-down view to see the whole forest
     }
 
+    // ── Character ────────────────────────────────────────────────────────────
+    const charGroup = buildCharacter();
+    charGroup.position.set(charRef.current.x, 0, charRef.current.z);
+    charGroup.rotation.y = charRef.current.angle;
+    scene.add(charGroup);
+    charGroupRef.current = charGroup;
+
     // Raycasting for click
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
@@ -521,21 +607,92 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
     window.addEventListener("touchmove", onTouchMove, { passive: true });
     window.addEventListener("touchend", onTouchEnd);
 
+    // ── Keyboard for character movement ──────────────────────────────────────
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+        keysRef.current.add(e.key.toLowerCase());
+        if (!followModeRef.current) {
+          followModeRef.current = true;
+          setFollowMode(true);
+        }
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => { keysRef.current.delete(e.key.toLowerCase()); };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+
     // Animate
     let t = 0;
     const tmpVec = new THREE.Vector3();
     const screenVec = new THREE.Vector3();
+    // Smooth follow camera target (lerped each frame)
+    const followCam = { x: 0, y: 8, z: -12, lx: 0, lz: 0 };
 
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
       t += 0.012;
+      const dt = 0.016; // ~60fps assumed
 
-      // Camera orbit
-      const cx = cam.panX + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta);
-      const cy = cam.radius * Math.cos(cam.phi);
-      const cz = cam.panZ + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta);
-      camera.position.set(cx, cy, cz);
-      camera.lookAt(cam.panX, 0, cam.panZ);
+      // ── Character movement ──────────────────────────────────────────────────
+      const ch = charRef.current;
+      const keys = keysRef.current;
+      const SPEED = 5.5;
+      const ROT_SPEED = 2.5;
+
+      let moveX = 0, moveZ = 0;
+      if (keys.has("w") || keys.has("arrowup"))    { moveX += Math.sin(ch.angle); moveZ += Math.cos(ch.angle); }
+      if (keys.has("s") || keys.has("arrowdown"))  { moveX -= Math.sin(ch.angle); moveZ -= Math.cos(ch.angle); }
+      if (keys.has("a") || keys.has("arrowleft"))  ch.angle += ROT_SPEED * dt;
+      if (keys.has("d") || keys.has("arrowright")) ch.angle -= ROT_SPEED * dt;
+
+      ch.moving = moveX !== 0 || moveZ !== 0;
+      if (ch.moving) {
+        ch.x += moveX * SPEED * dt;
+        ch.z += moveZ * SPEED * dt;
+        ch.walkT += dt * 8;
+      }
+
+      if (charGroupRef.current) {
+        charGroupRef.current.position.set(ch.x, 0, ch.z);
+        charGroupRef.current.rotation.y = ch.angle;
+
+        // Limb swing animation
+        const swing = ch.moving ? Math.sin(ch.walkT) * 0.55 : 0;
+        charGroupRef.current.traverse(obj => {
+          if (obj.name === "leftLegPivot")  obj.rotation.x =  swing;
+          if (obj.name === "rightLegPivot") obj.rotation.x = -swing;
+          if (obj.name === "leftArmPivot")  obj.rotation.x = -swing * 0.7;
+          if (obj.name === "rightArmPivot") obj.rotation.x =  swing * 0.7;
+        });
+
+        // Body bob when walking
+        charGroupRef.current.position.y = ch.moving ? Math.abs(Math.sin(ch.walkT)) * 0.04 : 0;
+      }
+
+      // ── Camera ─────────────────────────────────────────────────────────────
+      if (followModeRef.current) {
+        // Follow camera: behind and above the character
+        const behindDist = 6;
+        const heightOff = 4.5;
+        const targetCamX = ch.x - Math.sin(ch.angle) * behindDist;
+        const targetCamZ = ch.z - Math.cos(ch.angle) * behindDist;
+        const lerpSpeed = 0.12;
+        followCam.x += (targetCamX - followCam.x) * lerpSpeed;
+        followCam.y += (heightOff - followCam.y) * lerpSpeed;
+        followCam.z += (targetCamZ - followCam.z) * lerpSpeed;
+        followCam.lx += (ch.x - followCam.lx) * lerpSpeed;
+        followCam.lz += (ch.z - followCam.lz) * lerpSpeed;
+        camera.position.set(followCam.x, followCam.y, followCam.z);
+        camera.lookAt(followCam.lx, 0.8, followCam.lz);
+      } else {
+        // Orbit camera
+        const cx = cam.panX + cam.radius * Math.sin(cam.phi) * Math.cos(cam.theta);
+        const cy = cam.radius * Math.cos(cam.phi);
+        const cz = cam.panZ + cam.radius * Math.sin(cam.phi) * Math.sin(cam.theta);
+        camera.position.set(cx, cy, cz);
+        camera.lookAt(cam.panX, 0, cam.panZ);
+      }
 
       // Gentle tree sway
       treeGroupsRef.current.forEach((group, username) => {
@@ -572,12 +729,13 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
 
       // Proximity check — fire every ~60 frames (~1 s at 60fps)
       if (Math.round(t * 80) % 60 === 0 && onNearbyUsersRef.current) {
-        // Loads trees within a radius that's proportional to zoom but capped,
-        // so users must pan to distant trees to trigger their stats load
-        const loadRadius = Math.max(cam.radius * 0.75, 12);
+        // Use character position in follow mode, orbit look-at in orbit mode
+        const originX = followModeRef.current ? charRef.current.x : cam.panX;
+        const originZ = followModeRef.current ? charRef.current.z : cam.panZ;
+        const loadRadius = followModeRef.current ? 18 : Math.max(cam.radius * 0.75, 12);
         const nearby: string[] = [];
         treePositionsRef.current.forEach((pos, username) => {
-          const dist = Math.hypot(pos.x - cam.panX, pos.z - cam.panZ);
+          const dist = Math.hypot(pos.x - originX, pos.z - originZ);
           if (dist <= loadRadius) nearby.push(username);
         });
         const key = [...nearby].sort().join(",");
@@ -621,6 +779,9 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
       renderer.domElement.removeEventListener("touchstart", onTouchStart);
       window.removeEventListener("touchmove", onTouchMove);
       window.removeEventListener("touchend", onTouchEnd);
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      charGroupRef.current = null;
       renderer.dispose();
       if (el.contains(renderer.domElement)) el.removeChild(renderer.domElement);
       sceneRef.current = null;
@@ -704,6 +865,41 @@ export default function ForestWorld({ users, onSelectUser, selectedUser, onNearb
           <div style={{ width: 1, height: 8, background: "rgba(255,255,255,0.3)", margin: "0 auto" }} />
         </div>
       ))}
+
+      {/* Controls hint — bottom centre */}
+      {!followMode && (
+        <div style={{
+          position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)",
+          border: "1px solid rgba(255,255,255,0.12)", borderRadius: 20,
+          padding: "6px 14px", color: "rgba(255,255,255,0.55)", fontSize: 11, fontWeight: 500,
+          pointerEvents: "none", whiteSpace: "nowrap",
+        }}>
+          Press <kbd style={{ background: "rgba(255,255,255,0.12)", borderRadius: 4, padding: "1px 5px", fontFamily: "monospace" }}>W A S D</kbd> to walk around
+        </div>
+      )}
+
+      {/* Follow mode badge + exit button */}
+      {followMode && (
+        <div style={{
+          position: "absolute", bottom: 20, left: "50%", transform: "translateX(-50%)",
+          display: "flex", alignItems: "center", gap: 8,
+          background: "rgba(74,222,128,0.18)", backdropFilter: "blur(8px)",
+          border: "1px solid rgba(74,222,128,0.4)", borderRadius: 20,
+          padding: "6px 14px", color: "#4ade80", fontSize: 11, fontWeight: 600,
+          whiteSpace: "nowrap",
+        }}>
+          <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />
+          Walking — <kbd style={{ background: "rgba(255,255,255,0.1)", borderRadius: 4, padding: "1px 5px", fontFamily: "monospace" }}>WASD</kbd> to move
+          <button
+            data-testid="button-exit-follow"
+            onClick={() => { followModeRef.current = false; setFollowMode(false); keysRef.current.clear(); }}
+            style={{ background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)", borderRadius: 12, padding: "2px 8px", cursor: "pointer", color: "rgba(255,255,255,0.7)", fontSize: 10, marginLeft: 4 }}
+          >
+            Exit
+          </button>
+        </div>
+      )}
     </div>
   );
 }
