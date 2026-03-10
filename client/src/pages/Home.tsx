@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { TrackedUser, UserStats } from "@shared/schema";
 import ForestWorld from "@/components/ForestWorld";
@@ -7,7 +7,7 @@ import { apiRequest, queryClient as qc } from "@/lib/queryClient";
 import {
   Plus, Github, TreePine, X, ExternalLink, GitCommit,
   Star, Users, Activity, Code2, MapPin, Calendar,
-  GitFork, Sun, Moon, Trash2, MousePointer2
+  GitFork, Sun, Moon, Trash2, MousePointer2, Search, Check, Loader2,
 } from "lucide-react";
 
 const langColors: Record<string, string> = {
@@ -105,8 +105,20 @@ export default function Home() {
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
-  const [inputValue, setInputValue] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [statsMap, setStatsMap] = useState<Record<string, UserStats>>({});
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 350);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (showAdd) setTimeout(() => searchInputRef.current?.focus(), 50);
+    else { setSearchQuery(""); setDebouncedQuery(""); }
+  }, [showAdd]);
 
   useEffect(() => {
     const saved = localStorage.getItem("theme");
@@ -116,6 +128,18 @@ export default function Home() {
   }, []);
 
   const { data: trackedUsers = [] } = useQuery<TrackedUser[]>({ queryKey: ["/api/users"] });
+
+  const { data: searchResults = [], isFetching: searchLoading } = useQuery<
+    Array<{ login: string; avatar_url: string; html_url: string; type: string }>
+  >({
+    queryKey: ["/api/search", debouncedQuery],
+    queryFn: () =>
+      fetch(`/api/search?q=${encodeURIComponent(debouncedQuery)}`).then(r => r.json()),
+    enabled: debouncedQuery.length >= 1,
+    staleTime: 30 * 1000,
+  });
+
+  const trackedSet = new Set(trackedUsers.map(u => u.username.toLowerCase()));
 
   const handleStatsLoaded = useCallback((username: string, stats: UserStats) => {
     setStatsMap(prev => ({ ...prev, [username]: stats }));
@@ -130,11 +154,9 @@ export default function Home() {
 
   const addMutation = useMutation({
     mutationFn: (username: string) => apiRequest("POST", "/api/users", { username }),
-    onSuccess: () => {
+    onSuccess: (_, username) => {
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
-      setInputValue("");
-      setShowAdd(false);
-      toast({ title: "🌱 New tree planted!", description: `@${inputValue} joins the forest.` });
+      toast({ title: "🌱 New tree planted!", description: `@${username} joins the forest.` });
     },
     onError: (err: any) => {
       toast({ title: "Could not add user", description: err?.error || err?.message || "Failed", variant: "destructive" });
@@ -193,46 +215,87 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Add panel */}
+      {/* Search panel */}
       {showAdd && (
-        <Glass style={{ position: "absolute", top: 64, right: 16, zIndex: 10, padding: 16, width: 280 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "rgba(255,255,255,0.8)" }}>
-            Plant a new tree 🌱
+        <Glass style={{ position: "absolute", top: 64, right: 16, zIndex: 10, padding: 16, width: 300 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 10, color: "rgba(255,255,255,0.8)", display: "flex", alignItems: "center", gap: 6 }}>
+            <Search size={13} color="#4ade80" /> Search GitHub developers
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <div style={{ position: "relative", flex: 1 }}>
-              <Github size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.4)", pointerEvents: "none" }} />
-              <input
-                data-testid="input-add-user"
-                value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && addMutation.mutate(inputValue.trim().replace(/^@/, ""))}
-                placeholder="GitHub username"
-                autoFocus
-                style={{
-                  width: "100%", paddingLeft: 28, paddingRight: 8, paddingTop: 7, paddingBottom: 7,
-                  background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-                  borderRadius: 8, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box",
-                }}
-              />
-            </div>
-            <button
-              data-testid="button-add-user"
-              onClick={() => { const v = inputValue.trim().replace(/^@/, ""); if (v) addMutation.mutate(v); }}
-              disabled={!inputValue.trim() || addMutation.isPending}
+          <div style={{ position: "relative" }}>
+            <Github size={13} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.4)", pointerEvents: "none" }} />
+            {searchLoading && (
+              <Loader2 size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: "rgba(255,255,255,0.35)", animation: "spin 1s linear infinite" }} />
+            )}
+            <input
+              data-testid="input-search-user"
+              ref={searchInputRef}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              placeholder="Search username…"
               style={{
-                background: "rgba(74,222,128,0.2)", border: "1px solid rgba(74,222,128,0.5)",
-                borderRadius: 8, padding: "7px 12px", color: "#4ade80", cursor: "pointer",
-                opacity: (!inputValue.trim() || addMutation.isPending) ? 0.5 : 1,
-                fontSize: 13, fontWeight: 600, flexShrink: 0,
+                width: "100%", paddingLeft: 28, paddingRight: 28, paddingTop: 8, paddingBottom: 8,
+                background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: 8, color: "#fff", fontSize: 13, outline: "none", boxSizing: "border-box",
               }}
-            >
-              {addMutation.isPending ? "…" : "Add"}
-            </button>
+            />
           </div>
-          <p style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", marginTop: 8, marginBottom: 0 }}>
-            Uses GitHub's public API · Add GITHUB_TOKEN for higher limits
-          </p>
+
+          {/* Results list */}
+          {debouncedQuery.length >= 1 && (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4, maxHeight: 280, overflowY: "auto" }}>
+              {(searchResults as Array<{ login: string; avatar_url: string; type: string }>).length === 0 && !searchLoading && (
+                <div style={{ padding: "10px 0", textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.35)" }}>
+                  No users found
+                </div>
+              )}
+              {(searchResults as Array<{ login: string; avatar_url: string; type: string }>).map(u => {
+                const alreadyAdded = trackedSet.has(u.login.toLowerCase());
+                const isPending = addMutation.isPending && addMutation.variables === u.login;
+                return (
+                  <div
+                    key={u.login}
+                    data-testid={`result-user-${u.login}`}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "6px 8px",
+                      borderRadius: 8, background: "rgba(255,255,255,0.05)",
+                      border: "1px solid rgba(255,255,255,0.08)",
+                    }}
+                  >
+                    <img src={u.avatar_url} alt={u.login} style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        @{u.login}
+                      </div>
+                      {u.type === "Organization" && (
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>Organization</div>
+                      )}
+                    </div>
+                    <button
+                      data-testid={`button-add-${u.login}`}
+                      onClick={() => { if (!alreadyAdded && !isPending) addMutation.mutate(u.login); }}
+                      disabled={alreadyAdded || isPending}
+                      style={{
+                        flexShrink: 0, width: 28, height: 28,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                        borderRadius: 7, border: alreadyAdded ? "1px solid rgba(74,222,128,0.4)" : "1px solid rgba(74,222,128,0.5)",
+                        background: alreadyAdded ? "rgba(74,222,128,0.1)" : "rgba(74,222,128,0.2)",
+                        cursor: alreadyAdded ? "default" : "pointer",
+                        color: "#4ade80", opacity: isPending ? 0.6 : 1,
+                      }}
+                    >
+                      {isPending ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : alreadyAdded ? <Check size={12} /> : <Plus size={12} />}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {debouncedQuery.length === 0 && (
+            <p style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 8, marginBottom: 0 }}>
+              Type a name to search GitHub users
+            </p>
+          )}
         </Glass>
       )}
 

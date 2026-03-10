@@ -174,6 +174,26 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/search", async (req, res) => {
+    try {
+      const q = (req.query.q as string || "").trim();
+      if (!q || q.length < 1) return res.json([]);
+      const data = await fetchGitHub(`/search/users?q=${encodeURIComponent(q)}&per_page=8`);
+      const items = (data.items || []).map((u: any) => ({
+        login: u.login,
+        avatar_url: u.avatar_url,
+        html_url: u.html_url,
+        type: u.type,
+      }));
+      res.json(items);
+    } catch (err: any) {
+      if (err.message === "rate_limit") {
+        return res.status(429).json({ error: "Rate limit reached" });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.get("/api/users/:username/stats", async (req, res) => {
     try {
       const stats = await getUserStats(req.params.username);
