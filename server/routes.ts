@@ -19,8 +19,9 @@ async function fetchGitHub(path: string) {
     "Accept": "application/vnd.github.v3+json",
     "User-Agent": "GitForest-App",
   };
-  if (process.env.GITHUB_TOKEN) {
-    headers["Authorization"] = `token ${process.env.GITHUB_TOKEN}`;
+  const ghToken = process.env.GITHUB_TOKEN || process.env.GITHUB_PERSONAL_ACCESS_TOKEN;
+  if (ghToken) {
+    headers["Authorization"] = `token ${ghToken}`;
   }
   const res = await fetch(`${GITHUB_API}${path}`, { headers });
   if (!res.ok) {
