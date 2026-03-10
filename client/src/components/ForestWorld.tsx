@@ -53,178 +53,190 @@ function buildTreeMesh(commits: number, status: keyof typeof STATUS_COLORS): THR
   const group  = new THREE.Group();
   const stage  = getStage(commits);
   const t      = commitT(commits);
-  const s      = commits; // seed
+  const s      = commits;
   const colors = STATUS_COLORS[status] ?? STATUS_COLORS.inactive;
 
-  const totalH  = getTreeHeight(commits);
-  const trunkH  = totalH * (stage >= 4 ? 0.48 : stage >= 3 ? 0.40 : 0.34);
-  const trunkR  = 0.055 + t * 0.30;
-  // Per-stage canopy width multiplier
-  const canopyMults = [0.38, 0.60, 0.88, 1.12, 1.44];
-  const canopyR = (0.26 + t * 1.24) * canopyMults[stage - 1];
+  const totalH = getTreeHeight(commits);
+  // Conifers (1-3) have shorter visible trunk; deciduous (4-5) expose more trunk
+  const trunkH = totalH * [0.30, 0.34, 0.38, 0.52, 0.58][stage - 1];
+  const trunkR = 0.055 + t * 0.28;
+  const canopyMults = [0.40, 0.62, 0.90, 1.14, 1.46];
+  const canopyR = (0.24 + t * 1.20) * canopyMults[stage - 1];
 
   const trunkMat    = new THREE.MeshLambertMaterial({ color: colors.trunk });
   const foliageMats = colors.foliage.map(c => new THREE.MeshLambertMaterial({ color: c }));
 
-  // ── Ground moss / soil ring ────────────────────────────────────────────
-  const mossGeo = new THREE.RingGeometry(trunkR * 0.85, trunkR * (2.2 + stage * 0.5), 14);
-  const mossMat = new THREE.MeshLambertMaterial({ color: colors.ground });
-  const moss = new THREE.Mesh(mossGeo, mossMat);
+  // ── Ground ring (moss/soil) ────────────────────────────────────────────
+  const moss = new THREE.Mesh(
+    new THREE.RingGeometry(trunkR * 0.9, trunkR * (2.0 + stage * 0.55), 16),
+    new THREE.MeshLambertMaterial({ color: colors.ground })
+  );
   moss.rotation.x = -Math.PI / 2;
   moss.position.y = 0.01;
   group.add(moss);
 
-  // ── Trunk (tapered, slight organic lean) ──────────────────────────────
-  const trunkGeo = new THREE.CylinderGeometry(trunkR * 0.38, trunkR, trunkH, 10);
-  const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+  // ── Trunk ─────────────────────────────────────────────────────────────
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(trunkR * 0.36, trunkR, trunkH, 9),
+    trunkMat
+  );
   trunk.position.y = trunkH / 2;
-  trunk.rotation.z = (rng(s, 0) - 0.5) * 0.06;
-  trunk.rotation.x = (rng(s, 1) - 0.5) * 0.06;
+  trunk.rotation.z = (rng(s, 0) - 0.5) * 0.05;
+  trunk.rotation.x = (rng(s, 1) - 0.5) * 0.05;
   trunk.castShadow = true;
   trunk.receiveShadow = true;
   group.add(trunk);
 
-  // ── Bark ridges along trunk (stage 3+) ────────────────────────────────
-  if (stage >= 3) {
-    const ridgeN = 4 + stage * 2;
-    for (let i = 0; i < ridgeN; i++) {
-      const ridgeH = trunkH * (0.45 + rng(s, 100 + i) * 0.45);
-      const rGeo   = new THREE.BoxGeometry(trunkR * 0.10, ridgeH, trunkR * 0.06);
-      const ridge  = new THREE.Mesh(rGeo, trunkMat);
-      const angle  = (i / ridgeN) * Math.PI * 2 + rng(s, 200 + i) * 0.4;
-      ridge.position.set(
-        Math.cos(angle) * trunkR * 0.90,
-        trunkH * 0.45,
-        Math.sin(angle) * trunkR * 0.90
-      );
-      ridge.rotation.y = angle;
-      group.add(ridge);
-    }
-  }
-
-  // ── Root flares (mature = 4, ancient = 6) ─────────────────────────────
+  // ── Root buttresses — stage 4 (4 fins) and stage 5 (6 fins) ──────────
   if (stage >= 4) {
-    const flareN = stage === 5 ? 6 : 4;
-    for (let i = 0; i < flareN; i++) {
-      const a  = (i / flareN) * Math.PI * 2 + rng(s, 300 + i) * 0.25;
-      const fH = trunkH * (0.26 + rng(s, 400 + i) * 0.12);
-      const fGeo = new THREE.CylinderGeometry(trunkR * 0.05, trunkR * 0.46, fH, 4);
-      const flare = new THREE.Mesh(fGeo, trunkMat);
-      flare.position.set(Math.cos(a) * trunkR * 0.78, fH / 2, Math.sin(a) * trunkR * 0.78);
-      flare.rotation.z =  Math.cos(a) * 0.42;
-      flare.rotation.x = -Math.sin(a) * 0.42;
-      group.add(flare);
+    const finN = stage === 5 ? 6 : 4;
+    for (let i = 0; i < finN; i++) {
+      const a  = (i / finN) * Math.PI * 2 + rng(s, 10 + i) * 0.22;
+      const fH = trunkH * (0.30 + rng(s, 20 + i) * 0.10);
+      const fin = new THREE.Mesh(
+        new THREE.CylinderGeometry(trunkR * 0.06, trunkR * 0.42, fH, 4),
+        trunkMat
+      );
+      fin.position.set(Math.cos(a) * trunkR * 0.75, fH / 2, Math.sin(a) * trunkR * 0.75);
+      fin.rotation.z =  Math.cos(a) * 0.44;
+      fin.rotation.x = -Math.sin(a) * 0.44;
+      group.add(fin);
     }
   }
 
-  // ── Foliage ────────────────────────────────────────────────────────────
-  // Stages 1-2: stacked cones (needle / fir silhouette)
-  // Stages 3-5: organic sphere clusters (realistic leaf mass)
-  const foliageBase = trunkH * 0.72;
+  const foliageBase = trunkH * 0.80;
   const foliageSpan = totalH - foliageBase;
 
-  if (stage <= 2) {
-    // Narrow stacked cones
-    const layerCnt  = stage === 1 ? 1 : 3;
-    const coneAspect = stage === 1 ? 2.4 : 1.5;
-    const taper      = stage === 1 ? 0.50 : 0.65;
+  // ══ CONIFER STAGES (1-3): layered stacked cones ════════════════════════
+  if (stage <= 3) {
+    // Aspect ratio: stage 1 = very tall narrow spike, stage 3 = classic pyramid
+    const coneAspect = [2.6, 1.7, 1.1][stage - 1];
+    const taper      = [0.45, 0.58, 0.72][stage - 1];
+    const layerCnt   = [1, 3, 5][stage - 1];
+
     for (let i = 0; i < layerCnt; i++) {
       const lf = layerCnt === 1 ? 0 : i / (layerCnt - 1);
       const r  = canopyR * (1 - lf * taper);
       const h  = r * coneAspect * 2;
       const y  = foliageBase + lf * foliageSpan;
+      const rot = rng(s, 30 + i) * Math.PI * 2;
+
+      // Main outer cone
       const cone = new THREE.Mesh(
-        new THREE.ConeGeometry(r, h, 7),
+        new THREE.ConeGeometry(r, h, 7 + stage),
         foliageMats[i % foliageMats.length]
       );
-      cone.position.y = y + h * 0.36;
-      cone.rotation.y = rng(s, 500 + i) * Math.PI * 2;
+      cone.position.y = y + h * 0.34;
+      cone.rotation.y = rot;
       cone.castShadow = true;
       group.add(cone);
-      // Slight offset inner cone for depth on stage 2
-      if (stage === 2) {
+
+      // Overlapping inner cone (offset) for depth and fullness — stage 2+
+      if (stage >= 2) {
         const inner = new THREE.Mesh(
-          new THREE.ConeGeometry(r * 0.72, h * 0.80, 7),
+          new THREE.ConeGeometry(r * 0.78, h * 0.84, 7 + stage),
           foliageMats[(i + 1) % foliageMats.length]
         );
-        inner.position.y = y + h * 0.28;
-        inner.rotation.y = rng(s, 600 + i) * Math.PI * 2;
+        inner.position.y = y + h * 0.26;
+        inner.rotation.y = rot + Math.PI / 6;
         group.add(inner);
       }
     }
-  } else {
-    // Organic sphere clusters — realistic leaf cloud
-    const clusterN = Math.round(8 + t * 22); // 8 → 30 clusters
-    const spreadY  = [0, 0, 0.80, 0.68, 0.55][stage - 1]; // how much vertical bias
-    for (let i = 0; i < clusterN; i++) {
-      const cf       = i / (clusterN - 1 || 1);
-      const layerPos = Math.pow(cf, spreadY);           // bias toward base
-      const spreadR  = canopyR * (1 - layerPos * [0, 0, 0.76, 0.80, 0.68][stage - 1])
-                       * (0.55 + rng(s, 700 + i) * 0.90);
-      const angle    = rng(s, 800 + i) * Math.PI * 2;
-      const posY     = foliageBase + layerPos * foliageSpan * (0.88 + rng(s, 900 + i) * 0.24);
-      const sR       = canopyR * (0.22 + (1 - layerPos) * 0.18) * (0.65 + rng(s, 1000 + i) * 0.70);
 
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(sR, 5 + stage, 4 + stage),
-        foliageMats[i % foliageMats.length]
-      );
-      sphere.position.set(
-        Math.cos(angle) * spreadR,
-        posY,
-        Math.sin(angle) * spreadR
-      );
-      // Squash/stretch for organic silhouette
-      sphere.scale.y = 0.70 + rng(s, 1100 + i) * 0.55;
-      sphere.scale.x = 0.85 + rng(s, 1200 + i) * 0.30;
-      sphere.scale.z = 0.85 + rng(s, 1300 + i) * 0.30;
-      sphere.castShadow = true;
-      group.add(sphere);
+    // Upward branches on stage 3 (steep, hidden inside foliage)
+    if (stage === 3) {
+      const bMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + rng(s, 40 + i) * 0.3;
+        const bLen = trunkH * (0.30 + rng(s, 50 + i) * 0.16);
+        const b = new THREE.Mesh(new THREE.CylinderGeometry(trunkR * 0.06, trunkR * 0.16, bLen, 5), bMat);
+        b.position.set(Math.cos(a) * trunkR * 1.2, trunkH * (0.50 + (i % 2) * 0.12), Math.sin(a) * trunkR * 1.2);
+        b.rotation.z =  Math.cos(a) * 0.55;
+        b.rotation.x = -Math.sin(a) * 0.55;
+        b.castShadow = true;
+        group.add(b);
+      }
     }
-  }
 
-  // ── Branches (stage 3+) ────────────────────────────────────────────────
-  if (stage >= 3) {
-    const branchMat  = new THREE.MeshLambertMaterial({ color: colors.trunk });
-    const branchTilt = [0, 0, 0.60, 1.08, 1.40][stage - 1];
-    const branchN    = stage === 3 ? 3 : stage === 4 ? Math.round(4 + t * 3) : Math.round(6 + t * 4);
+  // ══ DECIDUOUS STAGES (4-5): sphere crown ═══════════════════════════════
+  } else {
+    const bMat = new THREE.MeshLambertMaterial({ color: colors.trunk });
+
+    // Exposed branches — 5 (mature) or 7 (ancient), nearly horizontal
+    const branchN    = stage === 4 ? 5 : Math.round(6 + t * 3);
+    const branchTilt = stage === 4 ? 1.05 : 1.35;
 
     for (let i = 0; i < branchN; i++) {
-      const a    = (i / branchN) * Math.PI * 2 + rng(s, 1400 + i) * 0.5;
-      const bLen = trunkH * (0.28 + t * 0.30 + rng(s, 1500 + i) * 0.14);
-      const bGeo = new THREE.CylinderGeometry(trunkR * 0.07, trunkR * 0.20, bLen, 6);
-      const b    = new THREE.Mesh(bGeo, branchMat);
-      const row  = i % 3;
-      b.position.set(
-        Math.cos(a) * trunkR * 1.35,
-        trunkH * (0.26 + row * 0.11 + rng(s, 1600 + i) * 0.06),
-        Math.sin(a) * trunkR * 1.35
+      const a    = (i / branchN) * Math.PI * 2 + rng(s, 60 + i) * 0.45;
+      const bLen = trunkH * (0.35 + t * 0.25 + rng(s, 70 + i) * 0.12);
+      const b    = new THREE.Mesh(
+        new THREE.CylinderGeometry(trunkR * 0.07, trunkR * 0.19, bLen, 6),
+        bMat
       );
+      const heightFrac = 0.55 + (i % 3) * 0.08 + rng(s, 80 + i) * 0.05;
+      b.position.set(Math.cos(a) * trunkR * 1.3, trunkH * heightFrac, Math.sin(a) * trunkR * 1.3);
       b.rotation.z =  Math.cos(a) * branchTilt;
       b.rotation.x = -Math.sin(a) * branchTilt;
       b.castShadow = true;
       group.add(b);
 
-      // Sub-branches on mature / ancient
-      if (stage >= 4) {
-        const subN = 2 + Math.round(rng(s, 1700 + i) * 2);
-        for (let j = 0; j < subN; j++) {
-          const sa   = a + (j - 1) * 0.55 + rng(s, 1800 + i * 8 + j) * 0.3;
-          const sLen = bLen * (0.35 + rng(s, 1900 + i * 8 + j) * 0.25);
-          const sGeo = new THREE.CylinderGeometry(trunkR * 0.035, trunkR * 0.09, sLen, 5);
-          const sb   = new THREE.Mesh(sGeo, branchMat);
-          sb.position.set(
-            Math.cos(a) * trunkR * 1.35 + Math.cos(sa) * bLen * 0.38,
-            trunkH * (0.30 + row * 0.11) + rng(s, 2000 + i * 8 + j) * trunkH * 0.08,
-            Math.sin(a) * trunkR * 1.35 + Math.sin(sa) * bLen * 0.38
-          );
-          sb.rotation.z =  Math.cos(sa) * (branchTilt + 0.35);
-          sb.rotation.x = -Math.sin(sa) * (branchTilt + 0.35);
-          sb.castShadow = true;
-          group.add(sb);
-        }
-      }
+      // Secondary branch off each main branch
+      const sa   = a + (rng(s, 90 + i) - 0.5) * 1.0;
+      const sLen = bLen * (0.40 + rng(s, 100 + i) * 0.20);
+      const sb   = new THREE.Mesh(
+        new THREE.CylinderGeometry(trunkR * 0.035, trunkR * 0.09, sLen, 5),
+        bMat
+      );
+      sb.position.set(
+        Math.cos(a) * trunkR * 1.3 + Math.cos(sa) * bLen * 0.42,
+        trunkH * heightFrac + rng(s, 110 + i) * trunkH * 0.07,
+        Math.sin(a) * trunkR * 1.3 + Math.sin(sa) * bLen * 0.42
+      );
+      sb.rotation.z =  Math.cos(sa) * (branchTilt + 0.30);
+      sb.rotation.x = -Math.sin(sa) * (branchTilt + 0.30);
+      sb.castShadow = true;
+      group.add(sb);
     }
+
+    // Crown: 1 large central sphere + surrounding spheres
+    const crownParts = stage === 4 ? 4 : 6;
+    const mainR = canopyR * (stage === 4 ? 0.62 : 0.68);
+    const crownY = totalH - mainR * 0.55;
+
+    // Central sphere
+    const center = new THREE.Mesh(
+      new THREE.SphereGeometry(mainR, 9, 7),
+      foliageMats[0]
+    );
+    center.position.y = crownY;
+    center.scale.y = stage === 5 ? 0.72 : 0.82;
+    center.castShadow = true;
+    group.add(center);
+
+    // Surrounding spheres arranged in a ring
+    for (let i = 0; i < crownParts; i++) {
+      const angle = (i / crownParts) * Math.PI * 2 + rng(s, 120 + i) * 0.35;
+      const dist  = canopyR * (0.38 + rng(s, 130 + i) * 0.22);
+      const sr    = mainR * (0.58 + rng(s, 140 + i) * 0.28);
+      const sy    = crownY - mainR * (0.20 + rng(s, 150 + i) * 0.35);
+      const sp = new THREE.Mesh(
+        new THREE.SphereGeometry(sr, 8, 6),
+        foliageMats[(i + 1) % foliageMats.length]
+      );
+      sp.position.set(Math.cos(angle) * dist, sy, Math.sin(angle) * dist);
+      sp.scale.y = 0.78 + rng(s, 160 + i) * 0.28;
+      sp.castShadow = true;
+      group.add(sp);
+    }
+
+    // Skirt cone connecting crown to trunk (fills the gap)
+    const skirt = new THREE.Mesh(
+      new THREE.ConeGeometry(canopyR * 0.72, mainR * 1.0, 8),
+      foliageMats[2 % foliageMats.length]
+    );
+    skirt.position.y = crownY - mainR * 0.75;
+    skirt.castShadow = true;
+    group.add(skirt);
   }
 
   return group;
