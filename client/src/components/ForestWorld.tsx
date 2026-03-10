@@ -11,6 +11,7 @@ interface ForestWorldProps {
   users: TreeUser[];
   onSelectUser: (username: string | null) => void;
   selectedUser: string | null;
+  onNearbyUsers?: (usernames: string[]) => void;
 }
 
 const STATUS_COLORS = {
@@ -266,7 +267,7 @@ function supportsWebGL(): boolean {
   }
 }
 
-export default function ForestWorld({ users, onSelectUser, selectedUser }: ForestWorldProps) {
+export default function ForestWorld({ users, onSelectUser, selectedUser, onNearbyUsers }: ForestWorldProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const [webglError, setWebglError] = useState(false);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -277,6 +278,10 @@ export default function ForestWorld({ users, onSelectUser, selectedUser }: Fores
   const treePositionsRef = useRef<Map<string, THREE.Vector3>>(new Map());
   const [nameplates, setNameplates] = useState<Array<{ username: string; x: number; y: number; visible: boolean; commits: number; status: string }>>([]);
   const [size, setSize] = useState({ w: window.innerWidth, h: window.innerHeight });
+  // Keep a stable ref to the callback so the animation loop always gets the latest version
+  const onNearbyUsersRef = useRef(onNearbyUsers);
+  useEffect(() => { onNearbyUsersRef.current = onNearbyUsers; }, [onNearbyUsers]);
+  const prevNearbyKeyRef = useRef("");
 
   // Camera state
   const camRef = useRef({
@@ -564,6 +569,23 @@ export default function ForestWorld({ users, onSelectUser, selectedUser }: Fores
       });
 
       renderer.render(scene, camera);
+
+      // Proximity check — fire every ~60 frames (~1 s at 60fps)
+      if (Math.round(t * 80) % 60 === 0 && onNearbyUsersRef.current) {
+        // Loads trees within a radius that's proportional to zoom but capped,
+        // so users must pan to distant trees to trigger their stats load
+        const loadRadius = Math.max(cam.radius * 0.75, 12);
+        const nearby: string[] = [];
+        treePositionsRef.current.forEach((pos, username) => {
+          const dist = Math.hypot(pos.x - cam.panX, pos.z - cam.panZ);
+          if (dist <= loadRadius) nearby.push(username);
+        });
+        const key = [...nearby].sort().join(",");
+        if (key !== prevNearbyKeyRef.current) {
+          prevNearbyKeyRef.current = key;
+          onNearbyUsersRef.current(nearby);
+        }
+      }
 
       // Update HTML nameplates
       const plates: typeof nameplates = [];

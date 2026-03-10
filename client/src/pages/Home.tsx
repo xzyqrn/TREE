@@ -37,15 +37,8 @@ function stageFor(commits: number) {
   return STAGE_META.find(s => commits <= s.max) ?? STAGE_META[STAGE_META.length - 1];
 }
 
-// Individual stats loader — each user gets their own component, staggered by index
-function StatsLoader({ username, index, onLoaded }: { username: string; index: number; onLoaded: (username: string, stats: UserStats) => void }) {
-  const [enabled, setEnabled] = useState(index === 0);
-  useEffect(() => {
-    if (index === 0) return;
-    const timer = setTimeout(() => setEnabled(true), index * 400);
-    return () => clearTimeout(timer);
-  }, [index]);
-
+// Individual stats loader — only enabled when the user's tree is near the camera
+function StatsLoader({ username, enabled, onLoaded }: { username: string; enabled: boolean; onLoaded: (username: string, stats: UserStats) => void }) {
   const { data } = useQuery<UserStats>({
     queryKey: ["/api/users", username, "stats"],
     queryFn: () =>
@@ -108,7 +101,18 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [statsMap, setStatsMap] = useState<Record<string, UserStats>>({});
+  const [loadedUsers, setLoadedUsers] = useState<Set<string>>(new Set());
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  const handleNearbyUsers = useCallback((usernames: string[]) => {
+    setLoadedUsers(prev => {
+      const hasNew = usernames.some(u => !prev.has(u));
+      if (!hasNew) return prev;
+      const next = new Set(prev);
+      usernames.forEach(u => next.add(u));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 350);
@@ -178,13 +182,13 @@ export default function Home() {
 
   return (
     <div style={{ position: "fixed", inset: 0, overflow: "hidden" }}>
-      {/* Load stats for each user */}
-      {trackedUsers.map((u, i) => (
-        <StatsLoader key={u.username} username={u.username} index={i} onLoaded={handleStatsLoaded} />
+      {/* Load stats only for users whose trees are near the camera */}
+      {trackedUsers.map(u => (
+        <StatsLoader key={u.username} username={u.username} enabled={loadedUsers.has(u.username)} onLoaded={handleStatsLoaded} />
       ))}
 
       {/* 3D World */}
-      <ForestWorld users={forestUsers} onSelectUser={setSelectedUser} selectedUser={selectedUser} />
+      <ForestWorld users={forestUsers} onSelectUser={setSelectedUser} selectedUser={selectedUser} onNearbyUsers={handleNearbyUsers} />
 
       {/* Top bar */}
       <div style={{ position: "absolute", top: 16, left: "50%", transform: "translateX(-50%)", zIndex: 10, display: "flex", alignItems: "center", gap: 10 }}>
