@@ -1,15 +1,18 @@
-import { Activity, Calendar, Code2, ExternalLink, GitCommit, GitFork, Loader2, MapPin, Star, Trash2, UserRound, X } from "lucide-react";
+import { Activity, Calendar, Code2, ExternalLink, GitCommit, GitFork, Loader2, MapPin, Sprout, Star, Trash2, UserRound, X } from "lucide-react";
 
 import { Drawer, DrawerContent } from "@/components/ui/drawer";
 import { langColors, stageFor, STATUS_META } from "@/components/forest/meta";
-import type { UserStats } from "@shared/schema";
+import type { UserStats, WorldChunk } from "@shared/schema";
 
 interface ForestInspectorProps {
   isMobile: boolean;
   selectedUser: string | null;
+  selectedWorldUser: WorldChunk["users"][number] | null;
   selectedStats: UserStats | null;
   onClose: () => void;
+  onPlant: (username: string) => void;
   onRemove: (username: string) => void;
+  plantPendingUsername: string | null;
   removePendingUsername: string | null;
 }
 
@@ -27,9 +30,12 @@ function statCard(icon: React.ReactNode, label: string, value: string) {
 
 function InspectorContent({
   selectedUser,
+  selectedWorldUser,
   selectedStats,
   onClose,
+  onPlant,
   onRemove,
+  plantPendingUsername,
   removePendingUsername,
 }: Omit<ForestInspectorProps, "isMobile">) {
   if (!selectedUser) return null;
@@ -38,6 +44,8 @@ function InspectorContent({
   const stage = selectedStats ? stageFor(selectedStats.totalCommits) : null;
   const statusMeta = selectedStats ? STATUS_META[selectedStats.status] : STATUS_META.inactive;
   const isRemoving = removePendingUsername === selectedUser;
+  const isPlanting = plantPendingUsername === selectedUser;
+  const isPlanted = selectedWorldUser?.planted ?? false;
 
   return (
     <div className="p-5">
@@ -51,16 +59,26 @@ function InspectorContent({
           </div>
         </div>
         <div className="flex gap-2">
+          {!isPlanted && (
+            <button
+              className="pixel-icon-button"
+              onClick={() => onPlant(selectedUser)}
+            >
+              {isPlanting ? <Loader2 size={15} className="animate-spin" /> : <Sprout size={15} />}
+            </button>
+          )}
           <button className="pixel-icon-button" onClick={onClose}>
             <X size={15} />
           </button>
-          <button
-            className="pixel-icon-button pixel-icon-button-danger"
-            data-testid={`remove-user-${selectedUser}`}
-            onClick={() => onRemove(selectedUser)}
-          >
-            {isRemoving ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
-          </button>
+          {isPlanted && (
+            <button
+              className="pixel-icon-button pixel-icon-button-danger"
+              data-testid={`remove-user-${selectedUser}`}
+              onClick={() => onRemove(selectedUser)}
+            >
+              {isRemoving ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -84,6 +102,7 @@ function InspectorContent({
             />
             <div className="space-y-2">
               <div className="flex flex-wrap gap-2">
+                {isPlanted && <span className="pixel-chip pixel-chip-gold">Planted</span>}
                 <span className="pixel-chip" style={{ color: statusMeta.color, background: statusMeta.bg, borderColor: statusMeta.border }}>
                   {statusMeta.label}
                 </span>

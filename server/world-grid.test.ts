@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 
 import { chunkKey } from "@shared/schema";
 import { MemStorage } from "./storage";
-import { assignWorldSlot, slotKey } from "./world-grid";
+import {
+  SNAPSHOT_LOCAL_CELL_ORDER,
+  assignWorldSlot,
+  snapshotSlotForRank,
+  slotKey,
+  spiralChunkForIndex,
+} from "./world-grid";
 
 test("assignWorldSlot is deterministic for the same username and occupancy", () => {
   const occupied = new Set<string>();
@@ -51,4 +57,35 @@ test("starter world keeps multiple developers near the initial view", async () =
 
   assert.ok(totalUsers >= 6, `expected a visible neighborhood, got ${totalUsers} users`);
   assert.ok(initialChunkUsers >= 3, `expected a populated starting chunk, got ${initialChunkUsers} users`);
+});
+
+test("snapshot placement walks chunk indices in a square spiral", () => {
+  assert.deepEqual(
+    Array.from({ length: 9 }, (_, index) => spiralChunkForIndex(index)),
+    [
+      { chunkX: 0, chunkZ: 0 },
+      { chunkX: 1, chunkZ: 0 },
+      { chunkX: 1, chunkZ: 1 },
+      { chunkX: 0, chunkZ: 1 },
+      { chunkX: -1, chunkZ: 1 },
+      { chunkX: -1, chunkZ: 0 },
+      { chunkX: -1, chunkZ: -1 },
+      { chunkX: 0, chunkZ: -1 },
+      { chunkX: 1, chunkZ: -1 },
+    ],
+  );
+});
+
+test("snapshot placement uses the fixed center-biased local cell order", () => {
+  const firstChunkCells = Array.from({ length: SNAPSHOT_LOCAL_CELL_ORDER.length }, (_, index) => snapshotSlotForRank(index, 99));
+  assert.deepEqual(
+    firstChunkCells.map((slot) => slot.cell),
+    SNAPSHOT_LOCAL_CELL_ORDER,
+  );
+  assert.ok(firstChunkCells.every((slot) => slot.chunkX === 0 && slot.chunkZ === 0));
+
+  const nextChunk = snapshotSlotForRank(SNAPSHOT_LOCAL_CELL_ORDER.length, 99);
+  assert.equal(nextChunk.chunkX, 1);
+  assert.equal(nextChunk.chunkZ, 0);
+  assert.equal(nextChunk.cell, SNAPSHOT_LOCAL_CELL_ORDER[0]);
 });

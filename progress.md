@@ -161,3 +161,68 @@ Original prompt: fix the rendering issue, the bugs, the glitch
   - Playwright client runtime captures on `http://localhost:5002`:
     - startup grove: `output/density-check/shot-0.png` with `state-0.json` reporting `loadedChunks=9`, `visibleTrees=7`
     - streamed neighborhood after moving right: `output/density-stream/shot-0.png` with `state-0.json` reporting `chunk={cx:1,cz:0}`, `loadedChunks=12`, `visibleTrees=7`, and updated nearby labels (`dtolnay`, `rich-harris`, `developit`)
+
+- Follow-up prompt: "PLEASE IMPLEMENT THIS PLAN" (Global GitHub Open World)
+- Catalog-backed world implementation applied:
+  - Added richer shared world/search types for `catalogCount`, `plantedCount`, planted/source-aware chunk users, grouped hybrid search results, and plant responses.
+  - Added deterministic snapshot placement helpers in `server/world-grid.ts`:
+    - fixed 8-cell local order per chunk
+    - square-spiral chunk cursor
+    - snapshot slot mapping by rank
+    - reusable live-user candidate slot generator
+  - Added `server/catalog-storage.ts` with a Postgres-backed catalog storage path that:
+    - detects whether the catalog tables exist
+    - serves catalog counts, chunk windows, local search, and plant/unplant operations
+    - falls back cleanly when `DATABASE_URL` or tables are absent
+  - Refactored `server/storage.ts` into the richer storage contract plus runtime fallback to `MemStorage`.
+  - Reworked `server/routes.ts` so:
+    - `/api/world/bootstrap` reports both catalog and planted counts
+    - `/api/search` returns grouped `live` + `world` results with dedupe and optional `liveError`
+    - `POST /api/users` now plants existing world users or inserts live-only GitHub users and returns a jump target
+    - `/api/world/users/:username/location` resolves world users with planted/source metadata
+  - Added the snapshot importer at `script/import-github-world.ts` and `npm run import:github-world`.
+  - Updated the client world shell:
+    - `Home` now tracks catalog vs planted counts, limits stat hydration to selected + hovered + planted-visible users, and handles plant/unplant semantics
+    - `ForestSearchPanel` now renders grouped live/world results with planted/world chips
+    - `ForestInspector` now supports plant/unplant actions for selected users
+    - `ForestHud` now reports open-world counts
+    - `ForestWorld` / isometric controller now emit hover changes and visually mark planted developers in-scene
+- Added tests:
+  - `server/catalog-search.test.ts` for hybrid search dedupe
+  - extended `server/world-grid.test.ts` for spiral placement and fixed snapshot cell ordering
+- Verification:
+  - `npm run check` passes.
+  - `npm run build` passes.
+  - `npx tsx --test server/world-grid.test.ts` passes.
+  - `npx tsx --test server/catalog-search.test.ts` passes.
+  - `npx tsx --test client/src/components/forest/isometric/isometric-math.test.ts` passes.
+  - Runtime fallback verification on `http://localhost:5001`:
+    - startup scene: `output/global-world-start/shot-0.png`
+    - state reports planted labels and bounded rendering: `output/global-world-start/state-0.json`
+    - grouped search UI: `output/global-world-search/search-ui.png`
+    - `/api/search?q=tor` returns both live GitHub matches and local world match for `torvalds`
+    - posting live-only user `tor` returns `action="added-live"` and `/api/world/users/tor/location` resolves a valid world slot
+- Remaining limitation:
+  - Full Postgres catalog mode and importer execution were implemented but not exercised end-to-end in this environment because `DATABASE_URL` is not configured here. The runtime verification therefore used the new API/client behavior through the in-memory fallback path.
+
+- Follow-up prompt: "when it search button, it should be not be able to use movement, so the user can type"
+- Search-input movement lock applied:
+  - Added `movementEnabled` wiring from `Home` into `ForestWorld`.
+  - The isometric controller now disables movement when search is open, clears held keyboard/touch movement state, and ignores key events coming from editable elements (`input`, `textarea`, `select`, `contenteditable`).
+  - Mobile D-pad is hidden while search is open so touch movement is also blocked during text entry.
+- Verification:
+  - `npm run check` passes.
+  - Playwright client probe with search open saved `output/search-lock/state-0.json` and `output/search-lock/state-1.json`; avatar/camera coordinates remain identical before and after right-arrow input while the search panel is open.
+  - Direct Playwright DOM verification on `http://localhost:5002` confirmed `window.render_game_to_text()` avatar state is unchanged before vs after focusing the search input and pressing `ArrowRight`.
+
+- Follow-up prompt: "Optimize more"
+- Render-loop optimization pass in progress:
+  - Replaced the perpetual `requestAnimationFrame` loop in the isometric controller with an on-demand frame scheduler that only repaints while movement, camera easing, hover/selection changes, zoom, or jump flashes are active.
+  - Cached per-user tree metadata on chunk/stat updates so the frame path no longer recomputes tile positions, growth stage, and status for every tracked user on every render.
+  - Removed the redundant remote Google font bootstrap from `client/index.html` and the CSS font import so startup no longer waits on off-origin font requests that were already failing in this environment.
+- Verification:
+  - `npm run check` passes.
+  - `npm run build` passes.
+  - Playwright client against the built app on `http://localhost:5005` saved `output/optimize-more-2/shot-0.png` and `output/optimize-more-2/state-0.json`.
+  - Captured runtime state remains healthy after the new frame scheduling: `loadedChunks=9`, `visibleTrees=7`, `markerTrees=0`, with avatar movement reflected in the saved state.
+  - The rebuilt probe produced no `errors-0.json`, which clears the earlier external font request failure seen before the font cleanup.

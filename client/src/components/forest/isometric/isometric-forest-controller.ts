@@ -36,7 +36,7 @@ type WorldConfig = Pick<
 
 interface RenderLabel {
   username: string;
-  kind: "selected" | "hover" | "nearby";
+  kind: "selected" | "hover" | "nearby" | "planted";
 }
 
 interface ScreenLabel extends RenderLabel {
@@ -51,10 +51,20 @@ interface TreeDrawable {
   distance: number;
   stage: number;
   status: PixelStatus;
+  planted: boolean;
   projectedX: number;
   projectedY: number;
   detail: boolean;
   footprint: IsometricFootprint | null;
+}
+
+interface CachedTree {
+  username: string;
+  worldX: number;
+  worldZ: number;
+  stage: number;
+  status: PixelStatus;
+  planted: boolean;
 }
 
 interface ControllerOptions {
@@ -68,8 +78,14 @@ interface ControllerOptions {
     onSelectUser: (username: string | null) => void;
     onChunkWindowChange: (center: ChunkWindowChange) => void;
     onVisibleTrackedUsersChange: (usernames: string[]) => void;
+    onHoverUserChange?: (username: string | null) => void;
     onSceneReady?: () => void;
   };
+}
+
+function isEditableTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
 }
 
 function getStatus(summary: WorldChunkUserSummary, statsMap: Record<string, UserStats>): PixelStatus {
@@ -116,18 +132,21 @@ export class IsometricForestController {
   private readonly camera = { x: 0, z: 0, zoom: 1.08 } satisfies IsometricCamera;
   private readonly keyboard = new Set<string>();
   private touchVector = { x: 0, z: 0 };
+  private movementEnabled = true;
   private hoveredUser: string | null = null;
   private activeChunk: ChunkWindowChange = { cx: 0, cz: 0 };
   private visibleUserKey = "";
   private frameHandle = 0;
   private lastFrameTs = 0;
   private ready = false;
+  private needsRender = true;
   private footprints: IsometricFootprint[] = [];
   private markerCount = 0;
   private detailedCount = 0;
   private renderLabels: ScreenLabel[] = [];
   private jumpFlashUser: string | null = null;
   private jumpFlashT = 0;
+  private cachedTrees: CachedTree[] = [];
 
   constructor(options: ControllerOptions) {
     this.canvas = options.canvas;
@@ -146,7 +165,7 @@ export class IsometricForestController {
     this.setSize(options.size);
     this.setWorldData(options.worldConfig, options.chunks, options.statsMap);
     this.bindEvents();
-    this.scheduleLoop();
+    this.requestFrame();
   }
 
   setWorldData(worldConfig: WorldConfig, chunks: WorldChunk[], statsMap: Record<string, UserStats>) {
@@ -155,10 +174,13 @@ export class IsometricForestController {
     this.statsMap = statsMap;
     this.chunkMap.clear();
     chunks.forEach((chunk) => this.chunkMap.set(chunkKey(chunk.cx, chunk.cz), chunk));
+    this.cachedTrees = this.buildCachedTrees(chunks, statsMap);
+    this.invalidate();
   }
 
   setSelectedUser(selectedUser: string | null) {
     this.selectedUser = selectedUser;
+    this.invalidate();
   }
 
   setSize(size: { w: number; h: number }) {
@@ -166,10 +188,21 @@ export class IsometricForestController {
     this.canvas.width = size.w;
     this.canvas.height = size.h;
     this.offscreen = createOffscreen(size);
+    this.invalidate();
   }
 
   setTouchVector(x: number, z: number) {
     this.touchVector = { x, z };
+    this.requestFrame();
+  }
+
+  setMovementEnabled(enabled: boolean) {
+    this.movementEnabled = enabled;
+    if (!enabled) {
+      this.keyboard.clear();
+      this.touchVector = { x: 0, z: 0 };
+    }
+    this.requestFrame();
   }
 
   jumpToUser(target: SceneJumpTarget) {
@@ -183,6 +216,7 @@ export class IsometricForestController {
     this.jumpFlashUser = target.username;
     this.jumpFlashT = 1.2;
     this.syncChunkWindow();
+    this.invalidate();
   }
 
   getRenderState() {
@@ -218,6 +252,14 @@ export class IsometricForestController {
   dispose() {
     cancelAnimationFrame(this.frameHandle);
     this.unbindEvents();
+    this.callbacks.onHoverUserChange?.(null);
+  }
+
+  private setHoveredUser(username: string | null) {
+    if (this.hoveredUser === username) return;
+    this.hoveredUser = username;
+    this.callbacks.onHoverUserChange?.(username);
+    this.invalidate();
   }
 
   private seedInitialOrigin() {
@@ -237,11 +279,11 @@ export class IsometricForestController {
 
   private readonly onPointerMove = (event: PointerEvent) => {
     const point = this.toLogicalPoint(event.clientX, event.clientY);
-    this.hoveredUser = hitTestFootprints(this.footprints, point.x, point.y);
+    this.setHoveredUser(hitTestFootprints(this.footprints, point.x, point.y));
   };
 
   private readonly onPointerLeave = () => {
-    this.hoveredUser = null;
+    this.setHoveredUser(null);
   };
 
   private readonly onPointerDown = (event: PointerEvent) => {
@@ -253,17 +295,27 @@ export class IsometricForestController {
   private readonly onWheel = (event: WheelEvent) => {
     event.preventDefault();
     this.camera.zoom = Math.max(0.78, Math.min(2.3, this.camera.zoom - event.deltaY * 0.0012));
+    this.invalidate();
   };
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
+    if (!this.movementEnabled || isEditableTarget(event.target)) return;
     const key = event.key.toLowerCase();
     if (!["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)) return;
     event.preventDefault();
+    const sizeBefore = this.keyboard.size;
     this.keyboard.add(key);
+    if (this.keyboard.size !== sizeBefore) {
+      this.requestFrame();
+    }
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
-    this.keyboard.delete(event.key.toLowerCase());
+    if (isEditableTarget(event.target)) return;
+    const removed = this.keyboard.delete(event.key.toLowerCase());
+    if (removed) {
+      this.requestFrame();
+    }
   };
 
   private bindEvents() {
@@ -284,47 +336,105 @@ export class IsometricForestController {
     window.removeEventListener("keyup", this.onKeyUp);
   }
 
-  private scheduleLoop() {
-    const loop = (ts: number) => {
-      const delta = Math.min((ts - this.lastFrameTs || 16) / 1000, 1 / 20);
-      this.lastFrameTs = ts;
-      this.tick(delta);
+  private requestFrame() {
+    if (this.frameHandle) return;
+    this.frameHandle = requestAnimationFrame((ts) => this.runFrame(ts));
+  }
+
+  private invalidate() {
+    this.needsRender = true;
+    this.requestFrame();
+  }
+
+  private runFrame(ts: number) {
+    this.frameHandle = 0;
+    const delta = Math.min((ts - this.lastFrameTs || 16) / 1000, 1 / 20);
+    this.lastFrameTs = ts;
+
+    const changed = this.tick(delta);
+    if (changed || this.needsRender || !this.ready) {
       this.render();
+      this.needsRender = false;
       if (!this.ready) {
         this.ready = true;
         this.callbacks.onSceneReady?.();
       }
-      this.frameHandle = requestAnimationFrame(loop);
-    };
-    this.frameHandle = requestAnimationFrame(loop);
+    }
+
+    if (this.isAnimating()) {
+      this.requestFrame();
+    }
   }
 
   private tick(deltaSeconds: number) {
+    let changed = false;
     const movement = this.getMovementVector();
     const speed = 22 * this.worldConfig.cellSize * 0.08;
-    this.avatar.x += movement.x * speed * deltaSeconds;
-    this.avatar.z += movement.z * speed * deltaSeconds;
+    if (movement.x !== 0 || movement.z !== 0) {
+      this.avatar.x += movement.x * speed * deltaSeconds;
+      this.avatar.z += movement.z * speed * deltaSeconds;
+      changed = true;
+    }
 
     const follow = Math.min(deltaSeconds * 5, 1);
-    this.camera.x += (this.avatar.x - this.camera.x) * follow;
-    this.camera.z += (this.avatar.z - this.camera.z) * follow;
+    const nextCameraX = this.camera.x + (this.avatar.x - this.camera.x) * follow;
+    const nextCameraZ = this.camera.z + (this.avatar.z - this.camera.z) * follow;
+    if (Math.abs(nextCameraX - this.camera.x) > 0.001 || Math.abs(nextCameraZ - this.camera.z) > 0.001) {
+      this.camera.x = nextCameraX;
+      this.camera.z = nextCameraZ;
+      changed = true;
+    }
 
     if (this.jumpFlashT > 0) {
       this.jumpFlashT = Math.max(0, this.jumpFlashT - deltaSeconds);
       if (this.jumpFlashT === 0) this.jumpFlashUser = null;
+      changed = true;
     }
 
-    this.syncChunkWindow();
+    if (this.syncChunkWindow()) {
+      changed = true;
+    }
+
+    return changed;
   }
 
   private syncChunkWindow() {
     const nextChunk = worldChunkForPoint(this.avatar.x, this.avatar.z);
-    if (nextChunk.cx === this.activeChunk.cx && nextChunk.cz === this.activeChunk.cz) return;
+    if (nextChunk.cx === this.activeChunk.cx && nextChunk.cz === this.activeChunk.cz) return false;
     this.activeChunk = nextChunk;
     this.callbacks.onChunkWindowChange(nextChunk);
+    return true;
+  }
+
+  private isAnimating() {
+    const movement = this.getMovementVector();
+    return movement.x !== 0
+      || movement.z !== 0
+      || Math.abs(this.avatar.x - this.camera.x) > 0.01
+      || Math.abs(this.avatar.z - this.camera.z) > 0.01
+      || this.jumpFlashT > 0;
+  }
+
+  private buildCachedTrees(chunks: WorldChunk[], statsMap: Record<string, UserStats>) {
+    const trees: CachedTree[] = [];
+    chunks.forEach((chunk) => {
+      chunk.users.forEach((summary) => {
+        const tile = chunkCellToTile(summary.chunkX, summary.chunkZ, summary.cell, this.worldConfig.cellSize);
+        trees.push({
+          username: summary.username,
+          worldX: tile.x,
+          worldZ: tile.z,
+          stage: getStage(getCommits(summary, statsMap)),
+          status: getStatus(summary, statsMap),
+          planted: summary.planted,
+        });
+      });
+    });
+    return trees;
   }
 
   private getMovementVector() {
+    if (!this.movementEnabled) return { x: 0, z: 0 };
     let x = 0;
     let z = 0;
 
@@ -382,20 +492,18 @@ export class IsometricForestController {
       z: this.avatar.z / this.worldConfig.cellSize,
     };
 
-    this.chunks.forEach((chunk) => {
-      chunk.users.forEach((summary) => {
-        const tile = chunkCellToTile(summary.chunkX, summary.chunkZ, summary.cell, this.worldConfig.cellSize);
-        const distance = summary.username === this.selectedUser
-          ? -1
-          : Math.hypot(tile.x - avatarTile.x, tile.z - avatarTile.z);
-        candidates.push({
-          username: summary.username,
-          worldX: tile.x,
-          worldZ: tile.z,
-          distance,
-          stage: getStage(getCommits(summary, this.statsMap)),
-          status: getStatus(summary, this.statsMap),
-        });
+    this.cachedTrees.forEach((tree) => {
+      const distance = tree.username === this.selectedUser
+        ? -1
+        : Math.hypot(tree.worldX - avatarTile.x, tree.worldZ - avatarTile.z);
+      candidates.push({
+        username: tree.username,
+        worldX: tree.worldX,
+        worldZ: tree.worldZ,
+        distance,
+        stage: tree.stage,
+        status: tree.status,
+        planted: tree.planted,
       });
     });
 
@@ -523,9 +631,11 @@ export class IsometricForestController {
   private drawTreeDrawable(ctx: CanvasRenderingContext2D, drawable: TreeDrawable) {
     if (!drawable.detail) {
       this.drawSprite(ctx, "marker", drawable.projectedX, drawable.projectedY);
+      if (drawable.planted) this.drawPlantedBadge(ctx, drawable.projectedX, drawable.projectedY - 8 * this.camera.zoom);
       return;
     }
     this.drawSprite(ctx, treeSpriteKey(drawable.stage, drawable.status), drawable.projectedX, drawable.projectedY);
+    if (drawable.planted) this.drawPlantedBadge(ctx, drawable.projectedX, drawable.projectedY - 16 * this.camera.zoom);
   }
 
   private drawAvatar(ctx: CanvasRenderingContext2D, logical: ViewportSize, camera: IsometricCamera) {
@@ -551,7 +661,12 @@ export class IsometricForestController {
     if (hovered && hovered.username !== selected?.username) {
       labels.push({ username: hovered.username, kind: "hover", x: hovered.projectedX, y: hovered.projectedY - 28 * this.camera.zoom });
     }
-    nearby.forEach((item) => labels.push({ username: item.username, kind: "nearby", x: item.projectedX, y: item.projectedY - 24 * this.camera.zoom }));
+    nearby.forEach((item) => labels.push({
+      username: item.username,
+      kind: item.planted ? "planted" : "nearby",
+      x: item.projectedX,
+      y: item.projectedY - 24 * this.camera.zoom,
+    }));
 
     this.renderLabels = labels;
     labels.forEach((label) => this.drawLabel(ctx, label));
@@ -574,6 +689,10 @@ export class IsometricForestController {
       ctx.fillStyle = "#34523d";
       ctx.fillRect(x, y, width, height);
       ctx.strokeStyle = "#c5e4ae";
+    } else if (label.kind === "planted") {
+      ctx.fillStyle = "#f0d78f";
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeStyle = "#6d5c32";
     } else {
       ctx.fillStyle = "rgba(46, 66, 50, 0.82)";
       ctx.fillRect(x, y, width, height);
@@ -581,9 +700,24 @@ export class IsometricForestController {
     }
 
     ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
-    ctx.fillStyle = label.kind === "selected" ? "#2d2a18" : "#f2f6df";
+    ctx.fillStyle = label.kind === "selected" || label.kind === "planted" ? "#2d2a18" : "#f2f6df";
     ctx.fillText(text, x + 6, y + 10);
     ctx.restore();
+  }
+
+  private drawPlantedBadge(ctx: CanvasRenderingContext2D, x: number, y: number) {
+    const size = 4 * this.camera.zoom;
+    ctx.fillStyle = "#f6dc8a";
+    ctx.beginPath();
+    ctx.moveTo(x, y - size);
+    ctx.lineTo(x + size, y);
+    ctx.lineTo(x, y + size);
+    ctx.lineTo(x - size, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#6d5c32";
+    ctx.lineWidth = Math.max(1, this.camera.zoom * 0.8);
+    ctx.stroke();
   }
 
   private drawSprite(ctx: CanvasRenderingContext2D, key: string, x: number, y: number) {

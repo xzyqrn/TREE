@@ -3,7 +3,8 @@ import { Compass, Search, Sparkles, Trees, UserRound } from "lucide-react";
 import { STAGE_META } from "@/components/forest/meta";
 
 interface ForestHudProps {
-  trackedCount: number;
+  catalogCount: number;
+  plantedCount: number;
   visibleTrackedCount: number;
   loadedChunkCount: number;
   activeChunk: string;
@@ -17,7 +18,8 @@ interface ForestHudProps {
 }
 
 export function ForestHud({
-  trackedCount,
+  catalogCount,
+  plantedCount,
   visibleTrackedCount,
   loadedChunkCount,
   activeChunk,
@@ -32,7 +34,7 @@ export function ForestHud({
   const statusCopy = !sceneReady
     ? "Painting the first clearing."
     : statsPendingCount > 0
-      ? `Fetching ${statsPendingCount} visible profile${statsPendingCount === 1 ? "" : "s"}.`
+      ? `Fetching ${statsPendingCount} highlighted profile${statsPendingCount === 1 ? "" : "s"}.`
       : `Showing ${visibleTrackedCount} detailed trees across ${loadedChunkCount} streamed chunk${loadedChunkCount === 1 ? "" : "s"}.`;
 
   return (
@@ -43,18 +45,22 @@ export function ForestHud({
           <div className="mt-2 flex items-center justify-between gap-3">
             <div>
               <div className="pixel-title text-[20px]">GitForest</div>
-              <div className="mt-1 text-xs uppercase tracking-[0.22em] text-[#6a7242]">Cozy pixel explorer</div>
+              <div className="mt-1 text-xs uppercase tracking-[0.22em] text-[#6a7242]">Open GitHub world</div>
             </div>
             <div className="pixel-chip">
               <Trees size={14} />
-              {trackedCount.toLocaleString()}
+              {catalogCount.toLocaleString()}
             </div>
           </div>
           <p className="mt-4 text-sm leading-6 text-[#405538]">{statusCopy}</p>
           <div className="mt-4 flex flex-wrap gap-2 text-xs text-[#495c41]">
             <span className="pixel-chip">
               <Sparkles size={12} />
-              {statsLoadedCount}/{Math.max(statsLoadedCount, visibleTrackedCount)} hydrated
+              {statsLoadedCount}/{Math.max(statsLoadedCount + statsPendingCount, 1)} hydrated
+            </span>
+            <span className="pixel-chip">
+              <Trees size={12} />
+              {plantedCount.toLocaleString()} planted
             </span>
             <span className="pixel-chip">
               <Compass size={12} />
@@ -76,7 +82,7 @@ export function ForestHud({
           onClick={onToggleSearch}
         >
           <Search size={15} />
-          {searchOpen ? "Close search" : "Plant developer"}
+          {searchOpen ? "Close search" : "Search GitHub"}
         </button>
       </div>
 

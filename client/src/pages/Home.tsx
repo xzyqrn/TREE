@@ -15,6 +15,7 @@ import {
   WORLD_PRELOAD_RADIUS_CHUNKS,
   WORLD_RENDER_RADIUS_CHUNKS,
   chunkKey,
+  type PlantDeveloperResponse,
   type UserStats,
   type WorldBootstrap,
   type WorldChunk,
@@ -86,11 +87,14 @@ function sameChunkUsers(left: WorldChunk["users"], right: WorldChunk["users"]) {
     const a = left[index];
     const b = right[index];
     if (
-      a.username !== b.username
+      a.githubId !== b.githubId
+      || a.username !== b.username
       || a.chunkX !== b.chunkX
       || a.chunkZ !== b.chunkZ
       || a.cell !== b.cell
       || a.worldSeed !== b.worldSeed
+      || a.planted !== b.planted
+      || a.source !== b.source
       || a.hasStats !== b.hasStats
       || a.totalCommitsHint !== b.totalCommitsHint
       || a.statusHint !== b.statusHint
@@ -99,6 +103,17 @@ function sameChunkUsers(left: WorldChunk["users"], right: WorldChunk["users"]) {
     }
   }
   return true;
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [delayMs, value]);
+
+  return debounced;
 }
 
 export default function Home() {
@@ -113,9 +128,11 @@ export default function Home() {
   const [chunkCache, setChunkCache] = useState<Record<string, WorldChunk>>({});
   const [chunkWindowCenter, setChunkWindowCenter] = useState<ChunkWindowChange>({ cx: 0, cz: 0 });
   const [visibleTrackedUsers, setVisibleTrackedUsers] = useState<string[]>([]);
+  const [hoveredUser, setHoveredUser] = useState<string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<WorldUserLocation | null>(null);
   const [pendingJumpUsername, setPendingJumpUsername] = useState<string | null>(null);
-  const [trackedCountDelta, setTrackedCountDelta] = useState(0);
+  const [catalogCountDelta, setCatalogCountDelta] = useState(0);
+  const [plantedCountDelta, setPlantedCountDelta] = useState(0);
 
   useEffect(() => {
     document.documentElement.classList.remove("dark");
@@ -129,6 +146,8 @@ export default function Home() {
 
   const worldConfig = bootstrapQuery.data ?? {
     trackedCount: 0,
+    catalogCount: 0,
+    plantedCount: 0,
     chunkSize: WORLD_CHUNK_SIZE,
     cellSize: WORLD_CELL_SIZE,
     renderRadiusChunks: WORLD_RENDER_RADIUS_CHUNKS,
@@ -215,23 +234,41 @@ export default function Home() {
     });
   }, []);
 
-  const hydrateUsernames = useMemo(() => {
-    const next = new Set(visibleTrackedUsers);
-    if (selectedUser) next.add(selectedUser);
-    return Array.from(next);
-  }, [selectedUser, visibleTrackedUsers]);
-
   const selectedStats = selectedUser ? statsMap[selectedUser] ?? null : null;
   const visibleTrackedCount = visibleTrackedUsers.length;
-  const statsLoadedCount = useMemo(
-    () => hydrateUsernames.reduce((count, username) => count + (statsMap[username] ? 1 : 0), 0),
-    [hydrateUsernames, statsMap],
-  );
-  const statsPendingCount = Math.max(0, hydrateUsernames.length - statsLoadedCount);
-  const trackedCount = Math.max(0, worldConfig.trackedCount + trackedCountDelta);
+  const catalogCount = Math.max(0, worldConfig.catalogCount + catalogCountDelta);
+  const plantedCount = Math.max(0, worldConfig.plantedCount + plantedCountDelta);
   const loadedChunkCount = Object.keys(chunkCache).length;
   const activeChunkLabel = `Chunk ${chunkWindowCenter.cx}, ${chunkWindowCenter.cz}`;
   const chunkList = useMemo(() => Object.values(chunkCache), [chunkCache]);
+  const worldUserByName = useMemo(() => {
+    const map: Record<string, WorldChunk["users"][number]> = {};
+    chunkList.forEach((chunk) => {
+      chunk.users.forEach((user) => {
+        map[user.username] = user;
+      });
+    });
+    return map;
+  }, [chunkList]);
+  const plantedVisibleUsers = useMemo(
+    () => visibleTrackedUsers.filter((username) => worldUserByName[username]?.planted),
+    [visibleTrackedUsers, worldUserByName],
+  );
+  const debouncedHoveredUser = useDebouncedValue(hoveredUser, 180);
+  const selectedWorldUser = selectedUser ? worldUserByName[selectedUser] ?? null : null;
+
+  const prioritizedHydrateUsernames = useMemo(() => {
+    const next = new Set<string>();
+    if (selectedUser) next.add(selectedUser);
+    if (debouncedHoveredUser) next.add(debouncedHoveredUser);
+    plantedVisibleUsers.forEach((username) => next.add(username));
+    return Array.from(next);
+  }, [debouncedHoveredUser, plantedVisibleUsers, selectedUser]);
+  const statsLoadedCount = useMemo(
+    () => prioritizedHydrateUsernames.reduce((count, username) => count + (statsMap[username] ? 1 : 0), 0),
+    [prioritizedHydrateUsernames, statsMap],
+  );
+  const statsPendingCount = Math.max(0, prioritizedHydrateUsernames.length - statsLoadedCount);
 
   const jumpToTrackedUser = useCallback(async (username: string) => {
     const normalized = username.toLowerCase();
@@ -252,14 +289,42 @@ export default function Home() {
   }, [queryClient]);
 
   const addMutation = useMutation({
-    mutationFn: (username: string) => apiRequest("POST", "/api/users", { username }),
-    onSuccess: async (_response, username) => {
-      setTrackedCountDelta((current) => current + 1);
+    mutationFn: async (username: string): Promise<PlantDeveloperResponse> => {
+      const response = await apiRequest("POST", "/api/users", { username });
+      return response.json();
+    },
+    onSuccess: async (payload, username) => {
+      if (payload.action === "added-live") {
+        setCatalogCountDelta((current) => current + 1);
+        setPlantedCountDelta((current) => current + 1);
+      } else if (payload.action === "planted") {
+        setPlantedCountDelta((current) => current + 1);
+        setChunkCache((prev) => {
+          const next: Record<string, WorldChunk> = {};
+          Object.entries(prev).forEach(([key, chunk]) => {
+            next[key] = {
+              ...chunk,
+              users: chunk.users.map((user) =>
+                user.username === payload.username
+                  ? { ...user, planted: true }
+                  : user,
+              ),
+            };
+          });
+          return next;
+        });
+      }
       await queryClient.invalidateQueries({ queryKey: ["/api/search"] });
-      await jumpToTrackedUser(username);
+      await queryClient.invalidateQueries({ queryKey: ["/api/world/bootstrap"] });
+      setSelectedUser(payload.username);
+      setChunkWindowCenter({ cx: payload.chunkX, cz: payload.chunkZ });
+      setJumpTarget(payload);
+      setSearchOpen(false);
       toast({
-        title: "Developer planted",
-        description: `@${username} is now part of the forest.`,
+        title: payload.action === "already-planted" ? "Developer located" : "Developer planted",
+        description: payload.action === "already-planted"
+          ? `Jumped to @${username}.`
+          : `@${username} is now planted in the open world.`,
       });
     },
     onError: (error: Error) => {
@@ -275,28 +340,38 @@ export default function Home() {
     mutationFn: (username: string) => apiRequest("DELETE", `/api/users/${username}`),
     onSuccess: async (_response, username) => {
       const normalized = username.toLowerCase();
-      setTrackedCountDelta((current) => current - 1);
+      setPlantedCountDelta((current) => current - 1);
       setStatsMap((prev) => {
         const next = { ...prev };
         delete next[normalized];
         return next;
       });
       setVisibleTrackedUsers((prev) => prev.filter((candidate) => candidate !== normalized));
+      if (hoveredUser === normalized) setHoveredUser(null);
       setChunkCache((prev) => {
         const next: Record<string, WorldChunk> = {};
         Object.entries(prev).forEach(([key, chunk]) => {
           next[key] = {
             ...chunk,
-            users: chunk.users.filter((user) => user.username !== normalized),
+            users: catalogCount === plantedCount
+              ? chunk.users.filter((user) => user.username !== normalized)
+              : chunk.users.map((user) =>
+                  user.username === normalized
+                    ? { ...user, planted: false }
+                    : user,
+                ),
           };
         });
         return next;
       });
       if (selectedUser === normalized) setSelectedUser(null);
       await queryClient.invalidateQueries({ queryKey: ["/api/search"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/world/bootstrap"] });
       toast({
-        title: "Developer removed",
-        description: `@${username} left the forest.`,
+        title: "Developer unplanted",
+        description: catalogCount === plantedCount
+          ? `@${username} left the forest.`
+          : `@${username} is still in the world, but no longer marked as planted.`,
       });
     },
     onError: (error: Error) => {
@@ -313,13 +388,13 @@ export default function Home() {
       <div className="forest-cloud forest-cloud-one" />
       <div className="forest-cloud forest-cloud-two" />
 
-      {hydrateUsernames.map((username) => (
-        <StatsLoader
-          key={username}
-          username={username}
-          onLoaded={handleStatsLoaded}
-        />
-      ))}
+        {prioritizedHydrateUsernames.map((username) => (
+          <StatsLoader
+            key={username}
+            username={username}
+            onLoaded={handleStatsLoaded}
+          />
+        ))}
 
       <Suspense fallback={<ForestSceneFallback />}>
         {bootstrapQuery.data ? (
@@ -328,11 +403,13 @@ export default function Home() {
             chunks={chunkList}
             statsMap={statsMap}
             selectedUser={selectedUser}
+            movementEnabled={!searchOpen}
             jumpTarget={jumpTarget}
             onJumpHandled={() => setJumpTarget(null)}
             onSelectUser={setSelectedUser}
             onChunkWindowChange={setChunkWindowCenter}
             onVisibleTrackedUsersChange={setVisibleTrackedUsers}
+            onHoverUserChange={setHoveredUser}
             onSceneReady={() => setSceneReady(true)}
           />
         ) : (
@@ -341,7 +418,8 @@ export default function Home() {
       </Suspense>
 
       <ForestHud
-        trackedCount={trackedCount}
+        catalogCount={catalogCount}
+        plantedCount={plantedCount}
         visibleTrackedCount={visibleTrackedCount}
         loadedChunkCount={loadedChunkCount}
         activeChunk={activeChunkLabel}
@@ -366,13 +444,16 @@ export default function Home() {
       <ForestInspector
         isMobile={isMobile}
         selectedUser={selectedUser}
+        selectedWorldUser={selectedWorldUser}
         selectedStats={selectedStats}
         onClose={() => setSelectedUser(null)}
+        onPlant={(username) => addMutation.mutate(username)}
         onRemove={(username) => removeMutation.mutate(username)}
+        plantPendingUsername={addMutation.isPending ? addMutation.variables?.toLowerCase() ?? null : null}
         removePendingUsername={removeMutation.isPending ? removeMutation.variables?.toLowerCase() ?? null : null}
       />
 
-      {trackedCount === 0 && bootstrapQuery.isSuccess && (
+      {catalogCount === 0 && bootstrapQuery.isSuccess && (
         <div className="absolute inset-0 z-[18] grid place-items-center pointer-events-none">
           <div className="pixel-panel pixel-panel-strong w-[min(430px,calc(100vw-48px))] p-7">
             <div className="pixel-kicker">Empty world</div>

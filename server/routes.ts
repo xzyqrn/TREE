@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { mergeHybridSearchResults } from "./catalog-search";
+import { getStorage } from "./storage";
 import {
   WORLD_BOOTSTRAP_RADIUS_CHUNKS,
   WORLD_CELL_SIZE,
@@ -8,7 +9,9 @@ import {
   WORLD_PRELOAD_RADIUS_CHUNKS,
   WORLD_RENDER_RADIUS_CHUNKS,
   addUserSchema,
+  type TrackedWorldUser,
   type UserStats,
+  type WorldSearchResult,
   type WorldChunkResponse,
   type WorldChunkUserSummary,
 } from "@shared/schema";
@@ -199,10 +202,23 @@ function clampRadius(value: number, fallback = WORLD_PRELOAD_RADIUS_CHUNKS) {
   return Math.max(0, Math.min(4, Math.trunc(value)));
 }
 
-function toChunkSummary(username: string): Pick<WorldChunkUserSummary, "hasStats" | "totalCommitsHint" | "statusHint"> {
-  const cached = statsCache.get(normalizeUsername(username));
+function buildPlaceholderHints(user: Pick<TrackedWorldUser, "githubId" | "username">) {
+  const hash = Number(user.githubId) || hashUsername(user.username);
+  const commits = 120 + (hash % 7200);
+  const statuses: UserStats["status"][] = ["active", "moderate", "occasional", "inactive"];
+  return {
+    totalCommitsHint: commits,
+    statusHint: statuses[hash % statuses.length],
+  };
+}
+
+function toChunkSummary(user: TrackedWorldUser): Pick<WorldChunkUserSummary, "hasStats" | "totalCommitsHint" | "statusHint"> {
+  const cached = statsCache.get(normalizeUsername(user.username));
   if (!cached) {
-    return { hasStats: false };
+    return {
+      hasStats: false,
+      ...buildPlaceholderHints(user),
+    };
   }
   return {
     hasStats: true,
@@ -212,6 +228,7 @@ function toChunkSummary(username: string): Pick<WorldChunkUserSummary, "hasStats
 }
 
 async function buildChunkResponse(cx: number, cz: number, radius: number): Promise<WorldChunkResponse> {
+  const storage = await getStorage();
   const window = await storage.getChunkWindow(cx, cz, radius);
 
   return {
@@ -221,12 +238,15 @@ async function buildChunkResponse(cx: number, cz: number, radius: number): Promi
       cx: chunk.cx,
       cz: chunk.cz,
       users: chunk.users.map((user) => ({
+        githubId: user.githubId,
         username: user.username,
         chunkX: user.chunkX,
         chunkZ: user.chunkZ,
         cell: user.cell,
         worldSeed: user.worldSeed,
-        ...toChunkSummary(user.username),
+        planted: user.planted,
+        source: user.source,
+        ...toChunkSummary(user),
       })),
     })),
   };
@@ -236,6 +256,8 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  const storage = await getStorage();
+
   app.get("/api/users", async (req, res) => {
     try {
       const tracked = await storage.getTrackedUsers();
@@ -248,24 +270,54 @@ export async function registerRoutes(
   app.post("/api/users", async (req, res) => {
     try {
       const { username } = addUserSchema.parse(req.body);
-      const already = await storage.isTracked(username);
-      if (already) {
-        return res.status(400).json({ error: "User already tracked" });
+      const normalized = normalizeUsername(username);
+      const existing = await storage.getTrackedUserLocation(normalized);
+      if (existing?.planted) {
+        return res.json({
+          username: existing.username,
+          githubId: existing.githubId,
+          chunkX: existing.chunkX,
+          chunkZ: existing.chunkZ,
+          cell: existing.cell,
+          planted: true,
+          source: existing.source,
+          action: "already-planted",
+        });
       }
-      // Verify the user exists on GitHub
-      try {
-        await fetchGitHub(`/users/${username}`);
-      } catch (e: any) {
-        if (e.message === "User not found") {
-          return res.status(404).json({ error: "GitHub user not found" });
+
+      let profile;
+      if (!existing) {
+        try {
+          const githubUser = await fetchGitHub(`/users/${normalized}`);
+          profile = {
+            githubId: githubUser.id,
+            login: githubUser.login,
+            avatarUrl: githubUser.avatar_url,
+            htmlUrl: githubUser.html_url,
+            type: githubUser.type,
+          };
+        } catch (e: any) {
+          if (e.message === "User not found") {
+            return res.status(404).json({ error: "GitHub user not found" });
+          }
+          if (e.message === "rate_limit") {
+            return res.status(429).json({ error: "GitHub API rate limit reached. Try again in a minute, or add a GITHUB_TOKEN." });
+          }
+          throw e;
         }
-        if (e.message === "rate_limit") {
-          return res.status(429).json({ error: "GitHub API rate limit reached. Try again in a minute, or add a GITHUB_TOKEN." });
-        }
-        throw e;
       }
-      const user = await storage.addTrackedUser(username);
-      res.json(user);
+
+      const user = await storage.addTrackedUser(normalized, profile);
+      res.json({
+        username: user.username,
+        githubId: user.githubId,
+        chunkX: user.chunkX,
+        chunkZ: user.chunkZ,
+        cell: user.cell,
+        planted: user.planted,
+        source: user.source,
+        action: existing ? "planted" : "added-live",
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -283,20 +335,39 @@ export async function registerRoutes(
   app.get("/api/search", async (req, res) => {
     try {
       const q = (req.query.q as string || "").trim();
-      if (!q || q.length < 1) return res.json([]);
-      const data = await fetchGitHub(`/search/users?q=${encodeURIComponent(q)}&per_page=8`);
-      const items = await Promise.all((data.items || []).map(async (u: any) => ({
-        login: u.login,
-        avatar_url: u.avatar_url,
-        html_url: u.html_url,
-        type: u.type,
-        tracked: await storage.isTracked(u.login),
-      })));
-      res.json(items);
-    } catch (err: any) {
-      if (err.message === "rate_limit") {
-        return res.status(429).json({ error: "Rate limit reached" });
+      if (!q || q.length < 1) return res.json({ live: [], world: [], liveError: null });
+
+      const world = await storage.searchWorldUsers(q, 8);
+      let live: WorldSearchResult[] = [];
+      let liveError: string | null = null;
+
+      try {
+        const data = await fetchGitHub(`/search/users?q=${encodeURIComponent(q)}&per_page=8`);
+        live = await Promise.all((data.items || []).map(async (user: any) => {
+          const existing = await storage.getTrackedUserLocation(user.login);
+          return {
+            login: user.login,
+            avatar_url: user.avatar_url,
+            html_url: user.html_url,
+            type: user.type,
+            source: "live" as const,
+            inWorld: Boolean(existing),
+            planted: Boolean(existing?.planted),
+            chunkX: existing?.chunkX,
+            chunkZ: existing?.chunkZ,
+            cell: existing?.cell,
+          };
+        }));
+      } catch (err: any) {
+        if (err.message === "rate_limit") {
+          liveError = "GitHub search is rate-limited right now.";
+        } else {
+          throw err;
+        }
       }
+
+      res.json(mergeHybridSearchResults(world, live, { liveError }));
+    } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
@@ -322,11 +393,14 @@ export async function registerRoutes(
   app.get("/api/world/bootstrap", async (_req, res) => {
     try {
       const trackedCount = await storage.getTrackedCount();
+      const catalogCount = await storage.getCatalogCount();
       const initialChunk = await storage.getSuggestedInitialChunk();
       const initialFocus = await storage.getSuggestedInitialFocus(initialChunk);
       const chunks = await buildChunkResponse(initialChunk.cx, initialChunk.cz, WORLD_BOOTSTRAP_RADIUS_CHUNKS);
       res.json({
         trackedCount,
+        catalogCount,
+        plantedCount: trackedCount,
         chunkSize: WORLD_CHUNK_SIZE,
         cellSize: WORLD_CELL_SIZE,
         renderRadiusChunks: WORLD_RENDER_RADIUS_CHUNKS,
@@ -358,10 +432,13 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Tracked user not found" });
       }
       res.json({
+        githubId: trackedUser.githubId,
         username: trackedUser.username,
         chunkX: trackedUser.chunkX,
         chunkZ: trackedUser.chunkZ,
         cell: trackedUser.cell,
+        planted: trackedUser.planted,
+        source: trackedUser.source,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

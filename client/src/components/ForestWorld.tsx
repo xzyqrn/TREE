@@ -10,11 +10,13 @@ interface ForestWorldProps {
   chunks: WorldChunk[];
   statsMap: Record<string, UserStats>;
   selectedUser: string | null;
+  movementEnabled?: boolean;
   jumpTarget: SceneJumpTarget | null;
   onJumpHandled: () => void;
   onSelectUser: (username: string | null) => void;
   onChunkWindowChange: (center: ChunkWindowChange) => void;
   onVisibleTrackedUsersChange: (usernames: string[]) => void;
+  onHoverUserChange?: (username: string | null) => void;
   onSceneReady?: () => void;
 }
 
@@ -47,11 +49,13 @@ export default function ForestWorld({
   chunks,
   statsMap,
   selectedUser,
+  movementEnabled = true,
   jumpTarget,
   onJumpHandled,
   onSelectUser,
   onChunkWindowChange,
   onVisibleTrackedUsersChange,
+  onHoverUserChange,
   onSceneReady,
 }: ForestWorldProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -80,6 +84,7 @@ export default function ForestWorld({
         onSelectUser,
         onChunkWindowChange,
         onVisibleTrackedUsersChange,
+        onHoverUserChange,
         onSceneReady,
       },
     });
@@ -106,6 +111,13 @@ export default function ForestWorld({
   useEffect(() => {
     controllerRef.current?.setTouchVector(touchVector.x, touchVector.z);
   }, [touchVector]);
+
+  useEffect(() => {
+    if (!movementEnabled) {
+      setTouchVector({ x: 0, z: 0 });
+    }
+    controllerRef.current?.setMovementEnabled(movementEnabled);
+  }, [movementEnabled]);
 
   useEffect(() => {
     if (!jumpTarget) return;
@@ -138,7 +150,7 @@ export default function ForestWorld({
         }}
       />
 
-      {isMobile && (
+      {isMobile && movementEnabled && (
         <div
           style={{
             position: "absolute",

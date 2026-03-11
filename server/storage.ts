@@ -1,34 +1,31 @@
 import { randomUUID } from "crypto";
 
-import type { TrackedWorldUser } from "@shared/schema";
+import type { TrackedWorldUser, WorldSearchResult } from "@shared/schema";
 import { WORLD_CHUNK_SIZE, chunkKey } from "@shared/schema";
-import { assignWorldSlot, forEachChunkInRadius, normalizeUsername, slotKey } from "./world-grid";
+import { PostgresCatalogStorage } from "./catalog-storage";
+import type { CatalogUserProfile, IStorage } from "./storage-types";
+import { assignWorldSlot, forEachChunkInRadius, hash32, normalizeUsername, slotKey } from "./world-grid";
 
-interface TrackedWorldChunk {
-  cx: number;
-  cz: number;
-  users: TrackedWorldUser[];
+export type { CatalogUserProfile, IStorage } from "./storage-types";
+export type { WorldChunkWindow } from "./storage-types";
+
+function githubIdForUsername(username: string) {
+  return hash32(`github:${normalizeUsername(username)}`);
 }
 
-export interface WorldChunkWindow {
-  center: {
-    cx: number;
-    cz: number;
+function worldSearchResultFromUser(user: TrackedWorldUser): WorldSearchResult {
+  return {
+    login: user.username,
+    avatar_url: `https://github.com/${user.username}.png`,
+    html_url: `https://github.com/${user.username}`,
+    type: "User",
+    source: user.source,
+    inWorld: true,
+    planted: user.planted,
+    chunkX: user.chunkX,
+    chunkZ: user.chunkZ,
+    cell: user.cell,
   };
-  radius: number;
-  chunks: TrackedWorldChunk[];
-}
-
-export interface IStorage {
-  getTrackedUsers(): Promise<TrackedWorldUser[]>;
-  getTrackedCount(): Promise<number>;
-  getSuggestedInitialChunk(): Promise<{ cx: number; cz: number }>;
-  getSuggestedInitialFocus(chunk: { cx: number; cz: number }): Promise<{ chunkX: number; chunkZ: number; cell: number } | null>;
-  addTrackedUser(username: string): Promise<TrackedWorldUser>;
-  removeTrackedUser(username: string): Promise<void>;
-  isTracked(username: string): Promise<boolean>;
-  getTrackedUserLocation(username: string): Promise<TrackedWorldUser | null>;
-  getChunkWindow(cx: number, cz: number, radius: number): Promise<WorldChunkWindow>;
 }
 
 export class MemStorage implements IStorage {
@@ -62,10 +59,11 @@ export class MemStorage implements IStorage {
     ];
 
     const syntheticUsers = Math.max(0, parseInt(process.env.GITFOREST_SYNTHETIC_USERS || "0", 10) || 0);
-    this.seedUsers(defaultUsers);
+    this.seedUsers(defaultUsers, "snapshot");
     if (syntheticUsers > 0) {
       this.seedUsers(
         Array.from({ length: syntheticUsers }, (_, index) => `synthetic-dev-${String(index + 1).padStart(5, "0")}`),
+        "snapshot",
       );
     }
   }
@@ -75,6 +73,10 @@ export class MemStorage implements IStorage {
   }
 
   async getTrackedCount(): Promise<number> {
+    return this.trackedUsers.size;
+  }
+
+  async getCatalogCount(): Promise<number> {
     return this.trackedUsers.size;
   }
 
@@ -119,8 +121,8 @@ export class MemStorage implements IStorage {
     };
   }
 
-  async addTrackedUser(username: string): Promise<TrackedWorldUser> {
-    return this.insertTrackedUser(username);
+  async addTrackedUser(username: string, profile?: CatalogUserProfile): Promise<TrackedWorldUser> {
+    return this.insertTrackedUser(username, profile ? "live" : "snapshot", profile);
   }
 
   async removeTrackedUser(username: string): Promise<void> {
@@ -149,8 +151,8 @@ export class MemStorage implements IStorage {
     return this.trackedUsers.get(normalizeUsername(username)) ?? null;
   }
 
-  async getChunkWindow(cx: number, cz: number, radius: number): Promise<WorldChunkWindow> {
-    const chunks: TrackedWorldChunk[] = [];
+  async getChunkWindow(cx: number, cz: number, radius: number) {
+    const chunks: Array<{ cx: number; cz: number; users: TrackedWorldUser[] }> = [];
 
     forEachChunkInRadius(cx, cz, radius, (chunkX, chunkZ) => {
       const users = this.chunkIndex.get(chunkKey(chunkX, chunkZ)) ?? [];
@@ -168,17 +170,36 @@ export class MemStorage implements IStorage {
     };
   }
 
-  private seedUsers(usernames: string[]) {
+  async searchWorldUsers(query: string, limit: number): Promise<WorldSearchResult[]> {
+    const normalized = normalizeUsername(query);
+    const prefixMatches = Array.from(this.trackedUsers.values())
+      .filter((user) => user.username.startsWith(normalized))
+      .sort((left, right) => left.username.localeCompare(right.username));
+
+    const containsMatches = Array.from(this.trackedUsers.values())
+      .filter((user) => !user.username.startsWith(normalized) && user.username.includes(normalized))
+      .sort((left, right) => left.username.localeCompare(right.username));
+
+    return [...prefixMatches, ...containsMatches]
+      .slice(0, limit)
+      .map(worldSearchResultFromUser);
+  }
+
+  private seedUsers(usernames: string[], source: TrackedWorldUser["source"]) {
     const seen = new Set<string>();
     usernames.forEach((username) => {
       const normalized = normalizeUsername(username);
       if (seen.has(normalized) || this.trackedUsers.has(normalized)) return;
       seen.add(normalized);
-      this.insertTrackedUser(normalized);
+      this.insertTrackedUser(normalized, source);
     });
   }
 
-  private insertTrackedUser(username: string): TrackedWorldUser {
+  private insertTrackedUser(
+    username: string,
+    source: TrackedWorldUser["source"],
+    profile?: CatalogUserProfile,
+  ): TrackedWorldUser {
     const normalized = normalizeUsername(username);
     const maxRadiusChunks = this.getRadiusCapForCount(this.trackedUsers.size + 1);
     const slot = assignWorldSlot(
@@ -191,12 +212,15 @@ export class MemStorage implements IStorage {
     );
     const trackedUser: TrackedWorldUser = {
       id: randomUUID(),
+      githubId: profile?.githubId ?? githubIdForUsername(normalized),
       username: normalized,
       addedAt: new Date().toISOString(),
       chunkX: slot.chunkX,
       chunkZ: slot.chunkZ,
       cell: slot.cell,
       worldSeed: slot.worldSeed,
+      planted: true,
+      source,
     };
 
     this.trackedUsers.set(normalized, trackedUser);
@@ -217,4 +241,16 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+let storagePromise: Promise<IStorage> | null = null;
+
+async function createStorage(): Promise<IStorage> {
+  const pgStorage = await PostgresCatalogStorage.createFromEnv();
+  return pgStorage ?? new MemStorage();
+}
+
+export function getStorage() {
+  if (!storagePromise) {
+    storagePromise = createStorage();
+  }
+  return storagePromise;
+}

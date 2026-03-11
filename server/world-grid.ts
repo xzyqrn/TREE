@@ -7,6 +7,20 @@ export interface WorldSlot {
   worldSeed: number;
 }
 
+const SNAPSHOT_LOCAL_COORDS = [
+  { x: 7, z: 7 },
+  { x: 8, z: 7 },
+  { x: 7, z: 8 },
+  { x: 8, z: 8 },
+  { x: 6, z: 7 },
+  { x: 9, z: 7 },
+  { x: 6, z: 8 },
+  { x: 9, z: 8 },
+] as const;
+
+export const USERS_PER_SNAPSHOT_CHUNK = SNAPSHOT_LOCAL_COORDS.length;
+export const SNAPSHOT_LOCAL_CELL_ORDER = SNAPSHOT_LOCAL_COORDS.map(({ x, z }) => z * WORLD_CHUNK_SIZE + x);
+
 export function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
 }
@@ -58,14 +72,76 @@ export function slotFromWorldCell(x: number, z: number, worldSeed: number): Worl
   };
 }
 
-export function assignWorldSlot(
+export function snapshotCellForIndex(index: number) {
+  return SNAPSHOT_LOCAL_CELL_ORDER[index % SNAPSHOT_LOCAL_CELL_ORDER.length];
+}
+
+export function createSpiralChunkCursor() {
+  let chunkIndex = 0;
+  let x = 0;
+  let z = 0;
+  let dx = 1;
+  let dz = 0;
+  let segmentLength = 1;
+  let segmentProgress = 0;
+  let segmentRepeats = 0;
+
+  return {
+    current() {
+      return { chunkX: x, chunkZ: z };
+    },
+    advanceTo(targetIndex: number) {
+      while (chunkIndex < targetIndex) {
+        x += dx;
+        z += dz;
+        chunkIndex += 1;
+        segmentProgress += 1;
+        if (segmentProgress === segmentLength) {
+          segmentProgress = 0;
+          const nextDx = -dz;
+          const nextDz = dx;
+          dx = nextDx;
+          dz = nextDz;
+          segmentRepeats += 1;
+          if (segmentRepeats === 2) {
+            segmentRepeats = 0;
+            segmentLength += 1;
+          }
+        }
+      }
+      return { chunkX: x, chunkZ: z };
+    },
+  };
+}
+
+export function spiralChunkForIndex(index: number) {
+  if (index < 0) {
+    throw new Error(`Chunk index must be non-negative, got ${index}`);
+  }
+  return createSpiralChunkCursor().advanceTo(index);
+}
+
+export function snapshotSlotForRank(rank: number, worldSeed: number) {
+  if (rank < 0) {
+    throw new Error(`Rank must be non-negative, got ${rank}`);
+  }
+  const chunkIndex = Math.floor(rank / USERS_PER_SNAPSHOT_CHUNK);
+  const { chunkX, chunkZ } = spiralChunkForIndex(chunkIndex);
+  return {
+    chunkX,
+    chunkZ,
+    cell: snapshotCellForIndex(rank),
+    worldSeed,
+  } satisfies WorldSlot;
+}
+
+export function* candidateWorldSlots(
   username: string,
-  isOccupied: (chunkX: number, chunkZ: number, cell: number) => boolean,
   options?: {
     minRadiusChunks?: number;
     maxRadiusChunks?: number;
   },
-): WorldSlot {
+) {
   const normalized = normalizeUsername(username);
   const worldSeed = hash32(`${normalized}:world`);
   const minRadiusChunks = options?.minRadiusChunks ?? 2;
@@ -84,13 +160,29 @@ export function assignWorldSlot(
     const quadratic = attempt === 0 ? 0 : attempt * attempt;
     const worldCellX = baseWorldCell.x + stepX * quadratic + stepZ * attempt;
     const worldCellZ = baseWorldCell.z + stepZ * quadratic - stepX * attempt;
-    const slot = slotFromWorldCell(worldCellX, worldCellZ, worldSeed);
+    yield slotFromWorldCell(worldCellX, worldCellZ, worldSeed);
+  }
+}
+
+export function assignWorldSlot(
+  username: string,
+  isOccupied: (chunkX: number, chunkZ: number, cell: number) => boolean,
+  options?: {
+    minRadiusChunks?: number;
+    maxRadiusChunks?: number;
+  },
+): WorldSlot {
+  const slots = candidateWorldSlots(username, options);
+  while (true) {
+    const next = slots.next();
+    if (next.done) break;
+    const slot = next.value;
     if (!isOccupied(slot.chunkX, slot.chunkZ, slot.cell)) {
       return slot;
     }
   }
 
-  throw new Error(`Unable to assign world slot for ${normalized}`);
+  throw new Error(`Unable to assign world slot for ${normalizeUsername(username)}`);
 }
 
 export function forEachChunkInRadius(
