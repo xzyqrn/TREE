@@ -3,6 +3,9 @@
   "name": "tree",
   "main": "dist/index.cjs",
   "compatibility_date": "2025-09-27",
+  "build": {
+    "command": "npm run build"
+  },
   "compatibility_flags": [
     "nodejs_compat"
   ],
