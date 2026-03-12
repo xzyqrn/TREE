@@ -1,0 +1,122 @@
+{
+  "idleBefore": {
+    "mode": "isometric",
+    "avatar": {
+      "x": 68,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    "camera": {
+      "x": 68,
+      "z": 68,
+      "zoom": 1.08
+    },
+    "chunk": {
+      "cx": 0,
+      "cz": 0
+    },
+    "selectedUser": null,
+    "hoveredUser": null,
+    "loadedChunks": 1,
+    "visibleTrees": 1,
+    "markerTrees": 0,
+    "labels": [
+      {
+        "username": "torvalds",
+        "kind": "planted"
+      }
+    ]
+  },
+  "motionStates": [
+    {
+      "x": 68.94,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-right"
+    },
+    {
+      "x": 69.17,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-right"
+    },
+    {
+      "x": 69.41,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    {
+      "x": 74.81,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-right"
+    },
+    {
+      "x": 75.04,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    {
+      "x": 76.68,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-right"
+    },
+    {
+      "x": 76.92,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    {
+      "x": 81.6,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-left"
+    },
+    {
+      "x": 81.83,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    {
+      "x": 83.48,
+      "z": 68,
+      "facing": "right",
+      "pose": "step-left"
+    }
+  ],
+  "idleAfter": {
+    "mode": "isometric",
+    "avatar": {
+      "x": 83.48,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    "camera": {
+      "x": 81.46,
+      "z": 68,
+      "zoom": 1.08
+    },
+    "chunk": {
+      "cx": 0,
+      "cz": 0
+    },
+    "selectedUser": null,
+    "hoveredUser": null,
+    "loadedChunks": 1,
+    "visibleTrees": 1,
+    "markerTrees": 0,
+    "labels": [
+      {
+        "username": "torvalds",
+        "kind": "planted"
+      }
+    ]
+  }
+}

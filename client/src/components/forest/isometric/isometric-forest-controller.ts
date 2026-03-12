@@ -18,7 +18,7 @@ import {
   type IsometricFootprint,
   type ViewportSize,
 } from "./isometric-math";
-import { createPixelAtlas, treeSpriteKey, type PixelStatus } from "./pixel-atlas";
+import { createPixelAtlas, groundSpriteKey, treeSpriteKey, type PixelStatus } from "./pixel-atlas";
 import { rng } from "./random";
 
 const BASE_TILE = { width: 20, height: 10 };
@@ -66,6 +66,11 @@ interface CachedTree {
   status: PixelStatus;
   planted: boolean;
 }
+
+type AvatarFacing = "left" | "right";
+type AvatarPose = "idle" | "walk-a" | "walk-b" | "walk-c" | "walk-d";
+
+const WALK_POSES = ["walk-a", "walk-b", "walk-c", "walk-d"] as const satisfies readonly AvatarPose[];
 
 interface ControllerOptions {
   canvas: HTMLCanvasElement;
@@ -133,6 +138,9 @@ export class IsometricForestController {
   private readonly keyboard = new Set<string>();
   private touchVector = { x: 0, z: 0 };
   private movementEnabled = true;
+  private avatarFacing: AvatarFacing = "right";
+  private avatarPose: AvatarPose = "idle";
+  private avatarWalkPhase = 0;
   private hoveredUser: string | null = null;
   private activeChunk: ChunkWindowChange = { cx: 0, cz: 0 };
   private visibleUserKey = "";
@@ -211,6 +219,8 @@ export class IsometricForestController {
     this.avatar.z = world.z;
     this.camera.x = world.x;
     this.camera.z = world.z;
+    this.avatarPose = "idle";
+    this.avatarWalkPhase = 0;
     this.selectedUser = target.username;
     this.hoveredUser = null;
     this.jumpFlashUser = target.username;
@@ -225,6 +235,8 @@ export class IsometricForestController {
       avatar: {
         x: Math.round(this.avatar.x * 100) / 100,
         z: Math.round(this.avatar.z * 100) / 100,
+        facing: this.avatarFacing,
+        pose: this.avatarPose,
       },
       camera: {
         x: Math.round(this.camera.x * 100) / 100,
@@ -371,8 +383,26 @@ export class IsometricForestController {
     const movement = this.getMovementVector();
     const speed = 22 * this.worldConfig.cellSize * 0.08;
     if (movement.x !== 0 || movement.z !== 0) {
-      this.avatar.x += movement.x * speed * deltaSeconds;
-      this.avatar.z += movement.z * speed * deltaSeconds;
+      const deltaX = movement.x * speed * deltaSeconds;
+      const deltaZ = movement.z * speed * deltaSeconds;
+      this.avatar.x += deltaX;
+      this.avatar.z += deltaZ;
+      const strideDistance = Math.hypot(deltaX, deltaZ);
+      this.avatarWalkPhase = (this.avatarWalkPhase + strideDistance / (this.worldConfig.cellSize * 0.75)) % 1;
+
+      const nextFacing = this.getAvatarFacing(movement);
+      if (nextFacing !== this.avatarFacing) {
+        this.avatarFacing = nextFacing;
+      }
+
+      const nextPose = this.getAvatarWalkPose();
+      if (nextPose !== this.avatarPose) {
+        this.avatarPose = nextPose;
+      }
+      changed = true;
+    } else if (this.avatarPose !== "idle" || this.avatarWalkPhase !== 0) {
+      this.avatarPose = "idle";
+      this.avatarWalkPhase = 0;
       changed = true;
     }
 
@@ -396,6 +426,25 @@ export class IsometricForestController {
     }
 
     return changed;
+  }
+
+  private getAvatarFacing(movement: { x: number; z: number }): AvatarFacing {
+    return movement.x - movement.z < 0 ? "left" : "right";
+  }
+
+  private getAvatarWalkPose(): AvatarPose {
+    const index = Math.floor(this.avatarWalkPhase * WALK_POSES.length) % WALK_POSES.length;
+    return WALK_POSES[index];
+  }
+
+  private getAvatarSpriteKey() {
+    return `avatar-${this.avatarPose}`;
+  }
+
+  private getAvatarLift() {
+    return this.avatarPose === "walk-b" || this.avatarPose === "walk-d"
+      ? 1.4 * this.camera.zoom
+      : 0;
   }
 
   private syncChunkWindow() {
@@ -564,23 +613,41 @@ export class IsometricForestController {
 
   private drawBackdrop(ctx: CanvasRenderingContext2D, logical: ViewportSize) {
     const gradient = ctx.createLinearGradient(0, 0, 0, logical.height);
-    gradient.addColorStop(0, "#d8f0f4");
-    gradient.addColorStop(0.5, "#dff0c0");
-    gradient.addColorStop(1, "#98bf7b");
+    gradient.addColorStop(0, "#d6eef7");
+    gradient.addColorStop(0.34, "#eef3cf");
+    gradient.addColorStop(0.62, "#bfd6a0");
+    gradient.addColorStop(1, "#7da067");
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, logical.width, logical.height);
 
-    ctx.fillStyle = "#f6e7a3";
-    ctx.fillRect(logical.width - 48, 22, 12, 12);
-    ctx.fillStyle = "#fbeec1";
-    ctx.fillRect(logical.width - 46, 24, 8, 8);
+    const sunX = logical.width * 0.82;
+    const sunY = logical.height * 0.16;
+    const glow = ctx.createRadialGradient(sunX, sunY, 4, sunX, sunY, logical.height * 0.16);
+    glow.addColorStop(0, "rgba(255,244,183,0.95)");
+    glow.addColorStop(0.45, "rgba(255,239,173,0.46)");
+    glow.addColorStop(1, "rgba(255,239,173,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(sunX - logical.height * 0.16, 0, logical.height * 0.32, logical.height * 0.32);
 
-    ctx.fillStyle = "#9fbe96";
-    ctx.fillRect(0, 42, logical.width, 12);
-    ctx.fillStyle = "#7da175";
-    ctx.fillRect(0, 54, logical.width, 10);
-    ctx.fillStyle = "#65855f";
-    ctx.fillRect(0, 64, logical.width, 8);
+    ctx.fillStyle = "#f7e39f";
+    ctx.fillRect(logical.width - 54, 18, 14, 14);
+    ctx.fillStyle = "#fff4c3";
+    ctx.fillRect(logical.width - 51, 21, 8, 8);
+
+    this.drawBackdropCloud(ctx, logical.width * 0.12, logical.height * 0.14, 56, 10, "rgba(255, 251, 235, 0.62)");
+    this.drawBackdropCloud(ctx, logical.width * 0.28, logical.height * 0.11, 42, 8, "rgba(255, 250, 232, 0.48)");
+    this.drawBackdropCloud(ctx, logical.width * 0.63, logical.height * 0.22, 48, 9, "rgba(255, 252, 238, 0.44)");
+
+    this.drawBackdropRidge(ctx, logical, logical.height * 0.28, 8, 6, "#cfd8c0", 11);
+    this.drawBackdropRidge(ctx, logical, logical.height * 0.35, 12, 6, "#a9bb96", 49);
+    this.drawBackdropRidge(ctx, logical, logical.height * 0.43, 16, 5, "#829d76", 97);
+    this.drawBackdropRidge(ctx, logical, logical.height * 0.52, 9, 4, "#5d7c58", 141);
+
+    const mist = ctx.createLinearGradient(0, logical.height * 0.34, 0, logical.height * 0.58);
+    mist.addColorStop(0, "rgba(243, 247, 225, 0.3)");
+    mist.addColorStop(1, "rgba(243, 247, 225, 0)");
+    ctx.fillStyle = mist;
+    ctx.fillRect(0, logical.height * 0.28, logical.width, logical.height * 0.3);
   }
 
   private drawGround(ctx: CanvasRenderingContext2D, logical: ViewportSize, camera: IsometricCamera) {
@@ -603,10 +670,44 @@ export class IsometricForestController {
           logical,
         );
         if (projected.y < logical.height * 0.24) continue;
-        const surface = this.isWaterTile(tileX, tileZ) ? "ground-water" : "ground-grass";
+        const surface = this.getGroundSpriteKey(tileX, tileZ);
         this.drawSprite(ctx, surface, projected.x, projected.y);
         this.drawAmbientTile(ctx, tileX, tileZ, projected.x, projected.y);
       }
+    }
+  }
+
+  private drawBackdropCloud(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    color: string,
+  ) {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, width, height);
+    ctx.fillRect(x + 8, y - 4, width * 0.44, height);
+    ctx.fillRect(x + width * 0.52, y - 2, width * 0.3, height - 1);
+  }
+
+  private drawBackdropRidge(
+    ctx: CanvasRenderingContext2D,
+    logical: ViewportSize,
+    baseY: number,
+    amplitude: number,
+    step: number,
+    color: string,
+    seed: number,
+  ) {
+    ctx.fillStyle = color;
+    for (let x = 0; x <= logical.width + step; x += step) {
+      const ridgeY = Math.round(
+        baseY
+        + Math.sin((x + seed) * 0.018) * amplitude
+        + Math.sin((x + seed * 1.7) * 0.047) * amplitude * 0.38,
+      );
+      ctx.fillRect(x, ridgeY, step + 1, logical.height - ridgeY);
     }
   }
 
@@ -645,7 +746,9 @@ export class IsometricForestController {
     };
     const projected = this.applyViewportOffset(projectToScreen(avatarTile, camera, logical, BASE_TILE), logical);
     this.drawHighlightTile(ctx, projected.x, projected.y, "__avatar__");
-    this.drawSprite(ctx, "avatar", projected.x, projected.y - 2 * Math.abs(Math.sin(this.lastFrameTs / 210)));
+    this.drawSprite(ctx, this.getAvatarSpriteKey(), projected.x, projected.y - this.getAvatarLift(), {
+      flipX: this.avatarFacing === "left",
+    });
   }
 
   private drawLabels(ctx: CanvasRenderingContext2D, drawables: TreeDrawable[]) {
@@ -720,22 +823,50 @@ export class IsometricForestController {
     ctx.stroke();
   }
 
-  private drawSprite(ctx: CanvasRenderingContext2D, key: string, x: number, y: number) {
+  private drawSprite(
+    ctx: CanvasRenderingContext2D,
+    key: string,
+    x: number,
+    y: number,
+    options?: { flipX?: boolean },
+  ) {
     const sprite = this.atlas.sprites[key];
     if (!sprite) return;
     const drawWidth = sprite.sw * this.camera.zoom;
     const drawHeight = sprite.sh * this.camera.zoom;
+    const drawX = x - sprite.anchorX * this.camera.zoom;
+    const drawY = y - sprite.anchorY * this.camera.zoom;
+
+    if (!options?.flipX) {
+      ctx.drawImage(
+        this.atlas.canvas,
+        sprite.sx,
+        sprite.sy,
+        sprite.sw,
+        sprite.sh,
+        drawX,
+        drawY,
+        drawWidth,
+        drawHeight,
+      );
+      return;
+    }
+
+    ctx.save();
+    ctx.translate(drawX + drawWidth, drawY);
+    ctx.scale(-1, 1);
     ctx.drawImage(
       this.atlas.canvas,
       sprite.sx,
       sprite.sy,
       sprite.sw,
       sprite.sh,
-      x - sprite.anchorX * this.camera.zoom,
-      y - sprite.anchorY * this.camera.zoom,
+      0,
+      0,
       drawWidth,
       drawHeight,
     );
+    ctx.restore();
   }
 
   private blit() {
@@ -756,6 +887,34 @@ export class IsometricForestController {
     return dx * dx + dz * dz * 1.2 < 7 && rng(tileX * 19, tileZ * 23) > 0.28;
   }
 
+  private hasWaterNeighbor(tileX: number, tileZ: number) {
+    for (let offsetZ = -1; offsetZ <= 1; offsetZ += 1) {
+      for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+        if (offsetX === 0 && offsetZ === 0) continue;
+        if (this.isWaterTile(tileX + offsetX, tileZ + offsetZ)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private getGroundSpriteKey(tileX: number, tileZ: number) {
+    const water = this.isWaterTile(tileX, tileZ);
+    const noise = rng(tileX * 29 + 17, tileZ * 31 + 13);
+    if (water) {
+      return noise > 0.58 ? groundSpriteKey("water-deep") : groundSpriteKey("water");
+    }
+
+    if (this.hasWaterNeighbor(tileX, tileZ)) {
+      return groundSpriteKey("shore");
+    }
+
+    if (noise > 0.8) return groundSpriteKey("grass-sunlit");
+    if (noise > 0.43) return groundSpriteKey("grass-clover");
+    return groundSpriteKey("grass");
+  }
+
   private applyViewportOffset<T extends { x: number; y: number }>(projected: T, logical: ViewportSize): T {
     return {
       ...projected,
@@ -765,17 +924,61 @@ export class IsometricForestController {
 
   private drawAmbientTile(ctx: CanvasRenderingContext2D, tileX: number, tileZ: number, x: number, y: number) {
     if (this.isWaterTile(tileX, tileZ)) return;
+    const nearWater = this.hasWaterNeighbor(tileX, tileZ);
     const noise = rng(tileX * 17 + 91, tileZ * 13 + 27);
-    if (noise <= 0.84) return;
+    if (nearWater) {
+      if (noise <= 0.62) return;
+      ctx.fillStyle = "#688b58";
+      ctx.fillRect(x - 3, y - 7, 1, 3);
+      ctx.fillRect(x - 1, y - 8, 1, 5);
+      ctx.fillRect(x + 1, y - 7, 1, 4);
+      ctx.fillStyle = "#d8c489";
+      ctx.fillRect(x - 2, y - 5, 4, 1);
+      if (noise > 0.87) {
+        ctx.fillStyle = "#d8f8ff";
+        ctx.fillRect(x + 2, y - 6, 1, 1);
+      }
+      return;
+    }
 
-    ctx.fillStyle = noise > 0.95 ? "#f8d97f" : "#6c964f";
+    if (noise <= 0.66) return;
+
+    if (noise > 0.93) {
+      ctx.fillStyle = "#6f9951";
+      ctx.fillRect(x - 2, y - 7, 1, 3);
+      ctx.fillRect(x, y - 8, 1, 4);
+      ctx.fillRect(x + 2, y - 7, 1, 3);
+      ctx.fillStyle = "#ffd977";
+      ctx.fillRect(x - 2, y - 9, 1, 1);
+      ctx.fillRect(x + 2, y - 9, 1, 1);
+      ctx.fillStyle = "#f7b5b4";
+      ctx.fillRect(x, y - 10, 1, 1);
+      return;
+    }
+
+    if (noise > 0.84) {
+      ctx.fillStyle = "#557a44";
+      ctx.fillRect(x - 3, y - 6, 6, 2);
+      ctx.fillStyle = "#9ccf72";
+      ctx.fillRect(x - 2, y - 7, 4, 1);
+      ctx.fillRect(x - 1, y - 8, 2, 1);
+      return;
+    }
+
+    if (noise > 0.76) {
+      ctx.fillStyle = "#798b73";
+      ctx.fillRect(x - 2, y - 5, 4, 2);
+      ctx.fillStyle = "#aebda6";
+      ctx.fillRect(x - 1, y - 6, 2, 1);
+      return;
+    }
+
+    ctx.fillStyle = "#6d9950";
     ctx.fillRect(x - 2, y - 7, 1, 3);
     ctx.fillRect(x, y - 8, 1, 4);
     ctx.fillRect(x + 2, y - 7, 1, 3);
-    if (noise > 0.95) {
-      ctx.fillStyle = "#f7a3a3";
-      ctx.fillRect(x, y - 10, 1, 1);
-    }
+    ctx.fillStyle = "#d8ef9e";
+    ctx.fillRect(x, y - 10, 1, 1);
   }
 
   private toLogicalPoint(clientX: number, clientY: number) {

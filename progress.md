@@ -226,3 +226,96 @@ Original prompt: fix the rendering issue, the bugs, the glitch
   - Playwright client against the built app on `http://localhost:5005` saved `output/optimize-more-2/shot-0.png` and `output/optimize-more-2/state-0.json`.
   - Captured runtime state remains healthy after the new frame scheduling: `loadedChunks=9`, `visibleTrees=7`, `markerTrees=0`, with avatar movement reflected in the saved state.
   - The rebuilt probe produced no `errors-0.json`, which clears the earlier external font request failure seen before the font cleanup.
+
+- Follow-up prompt: "fix the walking animation"
+- Walking animation fix applied:
+  - Replaced the single bobbed avatar sprite with explicit `idle`, `step-left`, and `step-right` pixel frames in the isometric atlas.
+  - Moved avatar animation to controller-owned walk state so movement advances the pose deterministically and releasing input returns the avatar to a grounded idle pose instead of freezing mid-step.
+  - Added avatar `facing` and `pose` to `render_game_to_text()` so runtime probes can confirm motion state, not just position.
+- Verification:
+  - `npm run build` passes.
+  - `npm run check` still fails in pre-existing `server/index.ts` typing around `app.fetch(request).then(...)`; that failure predates this walk-animation change.
+  - The bundled Playwright skill client still hits an existing local server issue on `/` under the preview path, so the animation was verified through a Vite runtime probe with mocked `/api` responses instead.
+  - Motion probe artifacts:
+    - `output/walking-fix-probe/idle-before.png`
+    - `output/walking-fix-probe/walk-mid.png`
+    - `output/walking-fix-probe/walk-late.png`
+    - `output/walking-fix-probe/idle-after.png`
+    - `output/walking-fix-probe/states.json` shows pose transitions during movement and a clean return to `idle` after key release.
+
+- Follow-up prompt: "edit website name and favicon" then "run it"
+- Branding + local-run fix applied:
+  - Added a real document title (`GitForest`) plus description metadata in `client/index.html`.
+  - Replaced the placeholder favicon with a GitForest pixel-tree icon in `client/public/favicon.svg` and regenerated `client/public/favicon.png`.
+  - Removed an unused `@hono/node-server/connectors/connect` import from `server/index.ts`; that stale import was crashing `npm run dev` under the installed `@hono/node-server@1.19.11`.
+  - Updated the dev server to honor `DEV_PORT` so local runs are not blocked when port `5000` is already occupied by another system process.
+  - Reordered the local dev middleware so the `/api` proxy is registered before Vite's HTML catch-all; previously `/api/world/bootstrap` returned `index.html`, which left the app on the loading fallback forever in local mode.
+- Verification:
+  - `npm run build` passes.
+  - `npm run check` passes.
+  - Local dev server runs with `DEV_PORT=59510 npm run dev`.
+  - `curl http://127.0.0.1:59510` returns HTML with `<title>GitForest</title>` plus `/favicon.svg` and `/favicon.png` icon tags.
+  - `curl -I http://127.0.0.1:59510/favicon.svg` returns `200 OK`.
+  - `curl http://127.0.0.1:59510/api/world/bootstrap` now returns JSON world bootstrap data instead of HTML.
+  - Playwright smoke capture on the running app completed without `errors-0.json` and saved `output/branding-run/shot-0.png`.
+
+- Follow-up prompt: "make the character much detailed and fix the walking animation"
+- Character art + walk-cycle upgrade applied:
+  - Reworked the avatar atlas art to a fuller silhouette with hair, face, scarf, satchel, coat shading, pants, and boots instead of the old minimal block figure.
+  - Expanded the motion set from `idle` plus two simple steps to `idle` + a four-frame stride loop (`walk-a`..`walk-d`) so the character keeps animating throughout movement rather than dropping back to an almost-idle pose mid-stride.
+  - Switched walk timing in the isometric controller from a fixed time-based phase to a distance-driven stride phase, and added a small lift on the passing frames so the motion reads more like a real walk cycle.
+- Verification:
+  - `npm run check` passes.
+  - `npm run build` passes.
+  - Local dev server runs with `DEV_PORT=59511 npm run dev`.
+  - The bundled Playwright web-game client completed successfully on the live app and saved:
+    - `output/character-detail-client/shot-0.png`
+    - `output/character-detail-client/state-0.json`
+  - Focused live-motion probe artifacts:
+    - `output/character-detail-probe/idle-before.png`
+    - `output/character-detail-probe/walk-a.png`
+    - `output/character-detail-probe/walk-b.png`
+    - `output/character-detail-probe/walk-c.png`
+    - `output/character-detail-probe/idle-after.png`
+    - `output/character-detail-probe/states.json`
+  - Direct pose sampling over 40 frames on the live app reported the full set `["walk-a","walk-b","walk-c","walk-d"]`, confirming the stride loop now cycles fully while moving and returns to `idle` on release.
+  - Longer runtime capture after the middleware fix saved `output/local-bootstrap-check/shot-0.png` and `output/local-bootstrap-check/state-0.json`, confirming the app leaves the loading shell in local Node mode (`loadedChunks=9`, `visibleTrees=7`).
+
+- Follow-up prompt: local add-developer POST fails with `RequestInit: duplex option is required when sending a body`
+- Local POST proxy fix applied:
+  - Updated the dev API proxy in `server/index.ts` to set `duplex: "half"` when forwarding streamed request bodies to the Hono app under Node/Undici.
+  - Tightened proxy error handling so local proxy failures return JSON instead of Express HTML error pages.
+- Verification:
+  - `curl -X POST http://127.0.0.1:59510/api/users -H 'content-type: application/json' --data '{"username":"gaearon"}'` returns `200 OK` with `action:"already-planted"`.
+  - `curl -X POST http://127.0.0.1:59510/api/users -H 'content-type: application/json' --data '{"username":"octocat"}'` returns `200 OK` with `action:"added-live"`.
+  - `npm run check` passes.
+  - `npm run build` passes.
+
+- Follow-up prompt: "fix the design of the tree"
+- Tree sprite art refresh applied:
+  - Reworked the isometric tree atlas in `client/src/components/forest/isometric/pixel-atlas.ts` so each growth stage has a more intentional silhouette instead of the old narrow trunk + flat wedge canopy.
+  - Added richer per-status palettes with dedicated canopy highlights, deeper canopy shade, and bark shading so active/moderate/occasional/inactive trees read with more depth.
+  - Introduced stage-specific canopy profiles, a wider grounded shadow, lower trunk placement, and small side bough/moss accents so mature trees feel anchored and fuller in-scene.
+- Verification:
+  - `npm run build` passes.
+  - Browser-based atlas probe against the live dev server printed the updated sprite silhouettes directly from canvas pixels; stage 1 now reads as a sapling and stage 5 as a broad canopy tree.
+  - Saved a dedicated preview artifact at `output/tree-sprite-preview.png` generated from the live atlas module.
+- Verification blockers / environment notes:
+  - `npm run check` is currently failing for pre-existing typing issues in `server/index.ts` (`Response | Promise<Response>` / implicit `any` errors), unrelated to the sprite change.
+  - The current local dev shell is still getting HTML back from `/api/world/bootstrap`, so the full forest scene stayed on the loading fallback during browser probing; tree-art verification therefore used the atlas module directly instead of the full scene bootstrap.
+
+- Follow-up prompt: "fix the landscape design"
+- Landscape art refresh applied:
+  - Expanded the terrain atlas in `client/src/components/forest/isometric/pixel-atlas.ts` with six deterministic ground variants: base grass, clover grass, sunlit grass, shore, shallow water, and deep water.
+  - Reworked the isometric backdrop in `client/src/components/forest/isometric/isometric-forest-controller.ts` to use a warmer sky gradient, sun glow, layered pixel-clouds, multiple ridge bands, and a mist pass instead of the old flat horizon stripes.
+  - Added terrain selection helpers so the renderer chooses shoreline tiles near lakes and rotates richer meadow variants across dry land.
+  - Upgraded ambient tile dressing with reeds/sand near water plus shrubs, flowers, and stones across grassland so the landscape has readable zones.
+- Verification:
+  - `npm run build` passes.
+  - `npm run check` passes.
+  - Direct browser-generated preview artifact saved at `output/landscape-preview.png`.
+  - Live scene Playwright capture against a fresh `DEV_PORT=5006 npm run dev` session saved:
+    - `output/landscape-live/shot-0.png`
+    - `output/landscape-live/shot-1.png`
+    - `output/landscape-live/state-0.json`
+  - Live scene state remained healthy during the capture: `chunk={cx:-1,cz:0}`, `loadedChunks=9`, `visibleTrees=7`, `markerTrees=0`, and no `errors-0.json` was produced.

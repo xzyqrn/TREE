@@ -1,0 +1,174 @@
+{
+  "idleBefore": {
+    "mode": "isometric",
+    "avatar": {
+      "x": -108,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    "camera": {
+      "x": -108,
+      "z": 68,
+      "zoom": 1.08
+    },
+    "chunk": {
+      "cx": -1,
+      "cz": 0
+    },
+    "selectedUser": null,
+    "hoveredUser": null,
+    "loadedChunks": 9,
+    "visibleTrees": 7,
+    "markerTrees": 0,
+    "labels": [
+      {
+        "username": "paulirish",
+        "kind": "planted"
+      },
+      {
+        "username": "gaearon",
+        "kind": "planted"
+      },
+      {
+        "username": "tiangolo",
+        "kind": "planted"
+      }
+    ]
+  },
+  "motionStates": [
+    {
+      "x": -107.77,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -107.53,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -107.3,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -106.36,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-b"
+    },
+    {
+      "x": -101.66,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -101.43,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -99.79,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-b"
+    },
+    {
+      "x": -99.55,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-b"
+    },
+    {
+      "x": -94.86,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -94.63,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-a"
+    },
+    {
+      "x": -92.98,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-c"
+    },
+    {
+      "x": -92.75,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-c"
+    },
+    {
+      "x": -88.29,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-b"
+    },
+    {
+      "x": -88.05,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-b"
+    },
+    {
+      "x": -86.41,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-c"
+    },
+    {
+      "x": -85.94,
+      "z": 68,
+      "facing": "right",
+      "pose": "walk-c"
+    }
+  ],
+  "idleAfter": {
+    "mode": "isometric",
+    "avatar": {
+      "x": -85.94,
+      "z": 68,
+      "facing": "right",
+      "pose": "idle"
+    },
+    "camera": {
+      "x": -88.01,
+      "z": 68,
+      "zoom": 1.08
+    },
+    "chunk": {
+      "cx": -1,
+      "cz": 0
+    },
+    "selectedUser": null,
+    "hoveredUser": null,
+    "loadedChunks": 9,
+    "visibleTrees": 7,
+    "markerTrees": 0,
+    "labels": [
+      {
+        "username": "paulirish",
+        "kind": "planted"
+      },
+      {
+        "username": "tiangolo",
+        "kind": "planted"
+      },
+      {
+        "username": "gaearon",
+        "kind": "planted"
+      }
+    ]
+  }
+}
