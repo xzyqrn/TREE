@@ -44,7 +44,16 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
-  const externals = allDeps.filter((dep) => !allowlist.includes(dep));
+  const nodeBuiltins = [
+    "async_hooks", "buffer", "crypto", "dns", "events", "fs", "http", "http2",
+    "net", "os", "path", "perf_hooks", "process", "querystring", "stream",
+    "string_decoder", "tls", "tty", "url", "util", "zlib", "module"
+  ];
+  const externals = [
+    ...nodeBuiltins,
+    ...nodeBuiltins.map(n => `node:${n}`),
+    ...allDeps.filter((dep) => !allowlist.includes(dep))
+  ];
 
   await esbuild({
     entryPoints: ["server/index.ts"],
@@ -52,12 +61,16 @@ async function buildAll() {
     bundle: true,
     format: "esm",
     outfile: "dist/index.js",
+    banner: {
+      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+    },
     define: {
       "process.env.NODE_ENV": '"production"',
     },
-    minify: true,
+    minify: false,
     external: externals,
     logLevel: "info",
+    mainFields: ["module", "main"],
   });
 }
 
