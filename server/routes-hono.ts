@@ -171,7 +171,14 @@ async function buildChunkResponse(cx: number, cz: number, radius: number): Promi
 }
 
 export function createHonoApp() {
-  const app = new Hono<{ Bindings: Record<string, string | undefined> }>();
+  const app = new Hono<{
+    Bindings: {
+      ASSETS: { fetch: typeof fetch };
+      GITHUB_TOKEN?: string;
+      GITHUB_PERSONAL_ACCESS_TOKEN?: string;
+      [key: string]: any;
+    };
+  }>();
 
   app.get("/api/users", async (c) => {
     try {
@@ -297,6 +304,14 @@ export function createHonoApp() {
     } catch (err: any) {
       return c.json({ error: err.message }, 500);
     }
+  });
+
+  // Serve static assets from Cloudflare's ASSETS binding
+  app.get("/*", (c) => {
+    if (c.env?.ASSETS) {
+      return c.env.ASSETS.fetch(c.req.raw);
+    }
+    return c.notFound();
   });
 
   return app;
