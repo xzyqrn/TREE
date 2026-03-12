@@ -2,7 +2,6 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { createServer as createNetServer } from "net";
 
 const app = express();
 const httpServer = createServer(app);
@@ -34,44 +33,7 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-function isPortInUseError(error: unknown): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === "EADDRINUSE";
-}
-
-async function canListenOnPort(port: number, host: string): Promise<boolean> {
-  return new Promise((resolve) => {
-    const probe = createNetServer();
-
-    probe.once("error", () => {
-      resolve(false);
-    });
-
-    probe.once("listening", () => {
-      probe.close(() => resolve(true));
-    });
-
-    probe.listen(port, host);
-  });
-}
-
-async function resolveListenPort() {
-  const host = "0.0.0.0";
-  const requestedPort = parseInt(process.env.PORT || "5000", 10);
-  const isProduction = process.env.NODE_ENV === "production";
-  const hasExplicitPort = typeof process.env.PORT === "string" && process.env.PORT.length > 0;
-
-  if (isProduction || hasExplicitPort) {
-    return { host, port: requestedPort, usedFallback: false };
-  }
-
-  for (let port = requestedPort; port < requestedPort + 50; port += 1) {
-    if (await canListenOnPort(port, host)) {
-      return { host, port, usedFallback: port !== requestedPort };
-    }
-  }
-
-  throw new Error(`No open development port found between ${requestedPort} and ${requestedPort + 49}`);
-}
+const PORT = parseInt(process.env.PORT || "5000", 10);
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -130,25 +92,7 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  const { host, port, usedFallback } = await resolveListenPort();
-
-  try {
-    await new Promise<void>((resolve, reject) => {
-      httpServer.once("error", reject);
-      httpServer.listen({ port, host }, () => {
-        httpServer.off("error", reject);
-        resolve();
-      });
-    });
-  } catch (error) {
-    if (isPortInUseError(error)) {
-      throw new Error(`Port ${port} is already in use. Set PORT explicitly to override the auto-selected development port.`);
-    }
-    throw error;
-  }
-
-  if (usedFallback) {
-    log(`port 5000 was busy, using http://localhost:${port} instead`);
-  }
-  log(`serving on port ${port}`);
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    log(`serving on port ${PORT}`);
+  });
 })();
