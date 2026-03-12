@@ -27,10 +27,11 @@ declare global {
   }
 }
 
-function controlButton(active: boolean) {
+function controlButton(active: boolean, compact = false) {
+  const size = compact ? 40 : 44;
   return {
-    width: 44,
-    height: 44,
+    width: size,
+    height: size,
     border: "3px solid #5f4f33",
     background: active ? "#f5e6a9" : "#d3bd83",
     color: "#3f321b",
@@ -38,7 +39,7 @@ function controlButton(active: boolean) {
     placeItems: "center",
     boxShadow: active ? "0 0 0 2px rgba(255,245,195,0.55) inset" : "inset 0 -4px 0 rgba(95,79,51,0.25)",
     fontFamily: "Silkscreen, monospace",
-    fontSize: 12,
+    fontSize: compact ? 11 : 12,
     userSelect: "none" as const,
     touchAction: "none" as const,
   };
@@ -154,19 +155,19 @@ export default function ForestWorld({
         <div
           style={{
             position: "absolute",
-            left: 18,
-            bottom: 112,
+            left: 12,
+            bottom: 20,
             zIndex: 16,
             display: "grid",
-            gridTemplateColumns: "repeat(3, 44px)",
-            gridTemplateRows: "repeat(3, 44px)",
-            gap: 6,
+            gridTemplateColumns: "repeat(3, 40px)",
+            gridTemplateRows: "repeat(3, 40px)",
+            gap: 4,
           }}
         >
           <div />
           <button
             aria-label="Move up"
-            style={controlButton(touchVector.z === -1)}
+            style={controlButton(touchVector.z === -1, true)}
             onPointerDown={() => setTouchVector({ x: 0, z: -1 })}
             onPointerUp={() => setTouchVector({ x: 0, z: 0 })}
             onPointerLeave={() => setTouchVector({ x: 0, z: 0 })}
@@ -176,7 +177,7 @@ export default function ForestWorld({
           <div />
           <button
             aria-label="Move left"
-            style={controlButton(touchVector.x === -1)}
+            style={controlButton(touchVector.x === -1, true)}
             onPointerDown={() => setTouchVector({ x: -1, z: 0 })}
             onPointerUp={() => setTouchVector({ x: 0, z: 0 })}
             onPointerLeave={() => setTouchVector({ x: 0, z: 0 })}
@@ -185,14 +186,14 @@ export default function ForestWorld({
           </button>
           <button
             aria-label="Stop movement"
-            style={controlButton(false)}
+            style={controlButton(false, true)}
             onPointerDown={() => setTouchVector({ x: 0, z: 0 })}
           >
             OK
           </button>
           <button
             aria-label="Move right"
-            style={controlButton(touchVector.x === 1)}
+            style={controlButton(touchVector.x === 1, true)}
             onPointerDown={() => setTouchVector({ x: 1, z: 0 })}
             onPointerUp={() => setTouchVector({ x: 0, z: 0 })}
             onPointerLeave={() => setTouchVector({ x: 0, z: 0 })}
@@ -202,7 +203,7 @@ export default function ForestWorld({
           <div />
           <button
             aria-label="Move down"
-            style={controlButton(touchVector.z === 1)}
+            style={controlButton(touchVector.z === 1, true)}
             onPointerDown={() => setTouchVector({ x: 0, z: 1 })}
             onPointerUp={() => setTouchVector({ x: 0, z: 0 })}
             onPointerLeave={() => setTouchVector({ x: 0, z: 0 })}

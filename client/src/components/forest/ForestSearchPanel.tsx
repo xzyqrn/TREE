@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, ExternalLink, Loader2, Sprout, Trees, X } from "lucide-react";
 
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type { WorldSearchResponse, WorldSearchResult } from "@shared/schema";
 
 interface ForestSearchPanelProps {
@@ -96,6 +97,7 @@ export function ForestSearchPanel({
   onAddUser,
   onJumpToUser,
 }: ForestSearchPanelProps) {
+  const isMobile = useIsMobile();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
@@ -135,12 +137,12 @@ export function ForestSearchPanel({
   if (!open) return null;
 
   return (
-    <div className="absolute right-4 top-20 z-30 w-[min(430px,calc(100vw-32px))] md:right-6 md:top-24">
-      <div className="pixel-panel pixel-panel-strong">
+    <div className={isMobile ? "absolute inset-x-3 bottom-4 top-24 z-30" : "absolute right-4 top-20 z-30 w-[min(430px,calc(100vw-32px))] md:right-6 md:top-24"}>
+      <div className={`pixel-panel pixel-panel-strong ${isMobile ? "flex h-full flex-col px-4 py-4" : ""}`}>
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="pixel-kicker">GitHub search</div>
-            <h3 className="pixel-title mt-2 text-[22px]">Search live profiles and planted developers</h3>
+            <h3 className="pixel-title mt-2 text-[20px] leading-[1.05] md:text-[22px]">Search live profiles and planted developers</h3>
             <p className="mt-2 text-sm leading-6 text-[#405538]">
               Live GitHub matches appear first. Developers already in the world are grouped separately and can be jumped to or planted.
             </p>
@@ -150,7 +152,7 @@ export function ForestSearchPanel({
           </button>
         </div>
 
-        <Command className="mt-4 rounded-none bg-transparent text-[#304529]">
+        <Command className={`mt-4 rounded-none bg-transparent text-[#304529] ${isMobile ? "flex min-h-0 flex-1 flex-col" : ""}`}>
           <CommandInput
             ref={inputRef}
             value={query}
@@ -159,7 +161,7 @@ export function ForestSearchPanel({
             data-testid="input-search-user"
             className="font-['DM_Sans'] text-[14px]"
           />
-          <CommandList className="mt-2 max-h-[340px] overflow-y-auto px-0">
+          <CommandList className={`mt-2 overflow-y-auto px-0 ${isMobile ? "min-h-0 flex-1" : "max-h-[340px]"}`}>
             {state === "idle" && (
               <div className="rounded-[14px] border-2 border-[#c4b16f] bg-[#f6ecbe] px-4 py-5 text-sm leading-6 text-[#405538]">
                 Start typing to search GitHub. Planted developers and already-indexed world matches will stay searchable even if live GitHub search slows down.

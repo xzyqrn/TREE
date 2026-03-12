@@ -403,7 +403,7 @@ export default function Home() {
             chunks={chunkList}
             statsMap={statsMap}
             selectedUser={selectedUser}
-            movementEnabled={!searchOpen}
+            movementEnabled={!searchOpen && (!isMobile || !selectedUser)}
             jumpTarget={jumpTarget}
             onJumpHandled={() => setJumpTarget(null)}
             onSelectUser={setSelectedUser}

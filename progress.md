@@ -218,6 +218,48 @@ Original prompt: fix the rendering issue, the bugs, the glitch
 - Follow-up prompt: "Optimize more"
 - Render-loop optimization pass in progress:
   - Replaced the perpetual `requestAnimationFrame` loop in the isometric controller with an on-demand frame scheduler that only repaints while movement, camera easing, hover/selection changes, zoom, or jump flashes are active.
+
+- Follow-up prompt: "fix the mobile version"
+- Mobile layout pass in progress:
+  - Reworked `ForestHud` into a mobile-specific compact top bar so the HUD no longer consumes most of the viewport.
+  - Converted the mobile search overlay into a bounded, scrollable sheet and tightened the mobile D-pad footprint/placement.
+  - Disabled movement while the mobile inspector drawer is open to avoid touch controls fighting the overlay.
+- Verification:
+  - `npm run check` passes.
+  - `develop-web-game` smoke capture saved `output/mobile-fix-smoke/shot-0.png` with `state-0.json`.
+  - Fresh iPhone 12 viewport captures:
+    - idle mobile layout: `output/mobile-fixed-page.png`
+    - search overlay: `output/mobile-fixed-search.png`
+    - inspector drawer after selecting `paulirish`: `output/mobile-fixed-select.png`
+  - Mobile selection probe confirms `selectedUser="paulirish"` after tap and the drawer state stays readable without the D-pad overlapping it.
+
+- Follow-up prompt: "add "Created by xzyqrn" https://github.com/xzyqrn In the middle lower"
+- Footer credit tweak applied:
+  - Added a bottom-center clickable credit chip in `ForestHud` linking to `https://github.com/xzyqrn`.
+  - Kept the treatment compact so it sits between the existing lower-left and lower-right HUD panels without obscuring gameplay.
+  - Adjusted the chip styling so the visible text keeps the requested casing: `Created by xzyqrn`.
+- Verification:
+  - `npm run check` passes.
+  - Playwright game-client capture refreshed at `output/credit-footer-check/shot-0.png` with render state in `output/credit-footer-check/state-0.json`.
+  - Full-page overlay capture at `output/credit-footer-page.png` confirms the credit appears in the lower middle between the existing bottom HUD cards.
+
+- Follow-up prompt: "also add my repo for it: https://github.com/xzyqrn/TREE.git"
+- Footer repo link tweak applied:
+  - Expanded the lower-middle footer cluster to include a second clickable chip linking to `https://github.com/xzyqrn/TREE.git`.
+  - Kept the credit and repo links grouped and centered so they share the same footer lane without colliding with the existing bottom HUD panels.
+- Verification:
+  - `npm run check` passes.
+  - Playwright game-client capture refreshed at `output/credit-footer-check-2/shot-0.png` with render state in `output/credit-footer-check-2/state-0.json`.
+  - Full-page overlay capture at `output/credit-footer-page-2.png` confirms both footer chips appear side by side in the lower middle.
+
+- Follow-up prompt: "change the TREE repo into Repository"
+- Footer repo label tweak applied:
+  - Renamed the lower-middle repo chip from `TREE repo` to `Repository`.
+  - Kept the same GitHub destination: `https://github.com/xzyqrn/TREE.git`.
+- Verification:
+  - `npm run check` passes.
+  - Playwright game-client capture refreshed at `output/credit-footer-check-3/shot-0.png` with render state in `output/credit-footer-check-3/state-0.json`.
+  - Full-page overlay capture at `output/credit-footer-page-3.png` confirms the footer now reads `Created by xzyqrn` and `Repository`.
   - Cached per-user tree metadata on chunk/stat updates so the frame path no longer recomputes tile positions, growth stage, and status for every tracked user on every render.
   - Removed the redundant remote Google font bootstrap from `client/index.html` and the CSS font import so startup no longer waits on off-origin font requests that were already failing in this environment.
 - Verification:
