@@ -2,32 +2,18 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
+// Packages that should be bundled INTO the worker (they are safe / pure-JS)
 const allowlist = [
   "@google/generative-ai",
   "axios",
-  "connect-pg-simple",
-  "cors",
   "date-fns",
   "drizzle-orm",
   "drizzle-zod",
-  "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
-  "multer",
+  "hono",
+  "@hono/node-server",
   "nanoid",
-  "nodemailer",
   "openai",
-  "passport",
-  "passport-local",
-  "pg",
-  "stripe",
   "uuid",
-  "ws",
-  "xlsx",
   "zod",
   "zod-validation-error",
 ];
@@ -44,59 +30,35 @@ async function buildAll() {
     ...Object.keys(pkg.dependencies || {}),
     ...Object.keys(pkg.devDependencies || {}),
   ];
+
+  // All Node.js built-ins — Cloudflare supplies these via nodejs_compat
   const nodeBuiltins = [
     "async_hooks", "buffer", "crypto", "dns", "events", "fs", "http", "http2",
     "net", "os", "path", "perf_hooks", "process", "querystring", "stream",
-    "string_decoder", "tls", "tty", "url", "util", "zlib", "module"
+    "string_decoder", "tls", "tty", "url", "util", "zlib", "module",
   ];
 
-  // Modules that definitely don't exist in Workers and need shimming
-  const shimmedModules = ["tty", "net", "tls", "dns", "http2", "child_process"];
-  
   const externals = [
-    ...nodeBuiltins.filter(n => !shimmedModules.includes(n)),
-    ...nodeBuiltins.filter(n => !shimmedModules.includes(n)).map(n => `node:${n}`),
-    ...allDeps.filter((dep) => !allowlist.includes(dep))
+    ...nodeBuiltins,
+    ...nodeBuiltins.map((n) => `node:${n}`),
+    ...allDeps.filter((dep) => !allowlist.includes(dep)),
   ];
-
-  const aliases: Record<string, string> = {};
-  for (const builtin of nodeBuiltins) {
-    if (!shimmedModules.includes(builtin)) {
-      aliases[builtin] = `node:${builtin}`;
-    }
-  }
 
   await esbuild({
     entryPoints: ["server/index.ts"],
-    platform: "node",
+    platform: "browser",
+    conditions: ["worker", "browser", "import", "module"],
     bundle: true,
     format: "esm",
     outfile: "dist/index.js",
-    alias: aliases,
-    banner: {
-      js: "import { createRequire } from 'node:module'; const require = createRequire('file:///_internal_');",
-    },
-    plugins: [{
-      name: 'node-shims',
-      setup(build) {
-        build.onResolve({ filter: /^(node:)?(tty|net|tls|dns|http2|child_process)$/ }, args => {
-          return { path: args.path, namespace: 'node-shim' }
-        })
-        build.onLoad({ filter: /.*/, namespace: 'node-shim' }, args => {
-          if (args.path.includes('tty')) {
-            return { contents: 'export const isatty = () => false; export default { isatty };', loader: 'js' }
-          }
-          return { contents: 'export default {};', loader: 'js' }
-        })
-      }
-    }],
     define: {
       "process.env.NODE_ENV": '"production"',
+      "process.env.PORT": "undefined",
     },
     minify: false,
     external: externals,
     logLevel: "info",
-    mainFields: ["module", "main"],
+    mainFields: ["worker", "module", "browser", "main"],
   });
 }
 
