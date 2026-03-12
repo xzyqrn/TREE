@@ -6,7 +6,7 @@
   "workers_dev": false,
   "routes": [
     {
-      "pattern": "app.xzyqrn.com",
+      "pattern": "tree.xzyqrn.com",
       "zone_name": "xzyqrn.com",
       "custom_domain": true
     }
