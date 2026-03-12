@@ -67,42 +67,40 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  await registerRoutes(httpServer, app);
+await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || "Internal Server Error";
 
-    console.error("Internal Server Error:", err);
+  console.error("Internal Server Error:", err);
 
-    if (res.headersSent) {
-      return next(err);
-    }
+  if (res.headersSent) {
+    return next(err);
+  }
 
-    return res.status(status).json({ message });
+  return res.status(status).json({ message });
+});
+
+if (process.env.NODE_ENV === "production") {
+  serveStatic(app);
+} else {
+  const { setupVite } = await import("./vite");
+  await setupVite(httpServer, app);
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.PORT) {
+  log("Running in Cloudflare Worker mode");
+} else {
+  // Normal Node.js environment
+  // Use @hono/node-server's serve which is more reliable for bundling
+  serve({
+    fetch: app as any,
+    port: PORT,
+    hostname: "0.0.0.0"
+  }, (info) => {
+    log(`serving on port ${info.port}`);
   });
-
-  if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
-  } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
-  }
-
-  if (process.env.NODE_ENV === "production" && !process.env.PORT) {
-    log("Running in Cloudflare Worker mode");
-  } else {
-    // Normal Node.js environment
-    // Use @hono/node-server's serve which is more reliable for bundling
-    serve({
-      fetch: app as any,
-      port: PORT,
-      hostname: "0.0.0.0"
-    }, (info) => {
-      log(`serving on port ${info.port}`);
-    });
-  }
-})();
+}
 
 export default app;
