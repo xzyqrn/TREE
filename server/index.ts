@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { serve } from "@hono/node-server";
 
 const app = express();
 const httpServer = createServer(app);
@@ -82,9 +83,6 @@ app.use((req, res, next) => {
     return res.status(status).json({ message });
   });
 
-  // importantly only setup vite in development and after
-  // setting up all the other routes so the catch-all route
-  // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
@@ -92,7 +90,19 @@ app.use((req, res, next) => {
     await setupVite(httpServer, app);
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    log(`serving on port ${PORT}`);
-  });
+  if (process.env.NODE_ENV === "production" && !process.env.PORT) {
+    log("Running in Cloudflare Worker mode");
+  } else {
+    // Normal Node.js environment
+    // Use @hono/node-server's serve which is more reliable for bundling
+    serve({
+      fetch: app as any,
+      port: PORT,
+      hostname: "0.0.0.0"
+    }, (info) => {
+      log(`serving on port ${info.port}`);
+    });
+  }
 })();
+
+export default app;
