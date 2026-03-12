@@ -59,12 +59,20 @@ async function buildAll() {
     ...allDeps.filter((dep) => !allowlist.includes(dep))
   ];
 
+  const aliases: Record<string, string> = {};
+  for (const builtin of nodeBuiltins) {
+    if (!shimmedModules.includes(builtin)) {
+      aliases[builtin] = `node:${builtin}`;
+    }
+  }
+
   await esbuild({
     entryPoints: ["server/index.ts"],
     platform: "node",
     bundle: true,
     format: "esm",
     outfile: "dist/index.js",
+    alias: aliases,
     banner: {
       js: "import { createRequire } from 'node:module'; const require = createRequire('file:///_internal_');",
     },
