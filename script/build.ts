@@ -62,7 +62,7 @@ async function buildAll() {
     format: "esm",
     outfile: "dist/index.js",
     banner: {
-      js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
+      js: "import { createRequire } from 'node:module'; const require = createRequire('file:///_internal_');",
     },
     define: {
       "process.env.NODE_ENV": '"production"',
