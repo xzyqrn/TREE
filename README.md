@@ -14,39 +14,6 @@
 - **🔍 Seamless Discovery**: Integrated GitHub user search to plant new "dev-trees" in your forest.
 - **🌓 Dynamic UI**: Premium glassmorphic interface with full dark/light mode support.
 
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js (v18 or higher)
-- A GitHub Personal Access Token (recommended to avoid rate limits)
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/xzyqrn/TREE.git
-   cd TREE
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment**:
-   Create a `.env` file in the root directory:
-   ```env
-   GITHUB_TOKEN=your_github_personal_access_token
-   PORT=5000
-   ```
-   `PORT` is optional in development. If it's unset and `5000` is already busy, `npm run dev` now falls forward to the next open local port automatically.
-
-4. **Run the development server**:
-   ```bash
-   npm run dev
-   ```
-   Open the URL printed in the terminal. It will usually be [http://localhost:5000](http://localhost:5000) unless that port is already in use.
-
 ## 🛠 Tech Stack
 
 - **Frontend**: React, TypeScript, Three.js, Lucide React, Shadcn UI
