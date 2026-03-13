@@ -6,7 +6,7 @@
 
 ## ✨ Key Features
 
-- **🌲 3D Evolution Architecture**: Developers grow from **Seedlings** (< 100 commits) to **Ancient Trees** (100K+ commits) based on their contributions.
+- **🌲 2.5D Isometric**: Developers grow from **Seedlings** (< 100 commits) to **Ancient Trees** (100K+ commits) based on their contributions.
 - **📊 Deep Analytics Integration**: Fetches real-time GitHub data including total commits, active days, starry counts, forks, and language proficiency.
 - **🎨 Interactive Exploration**: 
   - **Orbit & Zoom**: Explore the forest with smooth 3D camera controls.
@@ -25,5 +25,6 @@
 
 Distributed under the MIT License. See `LICENSE` for more information.
 
+## Still on Development
 ---
-Built with ❤️ by the GitForest contributors.
+by xzyqrn.
