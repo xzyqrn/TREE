@@ -2,7 +2,8 @@
 
 **GitForest** is a stunning, interactive 3D visualization of GitHub developer ecosystems. It transforms abstract developer statistics—commits, stars, and languages—into a living, breathing digital forest where every developer is represented by a unique tree.
 
-![GitForest Preview](https://github.com/xzyqrn/TREE/raw/main/preview.png) *(Placeholder: Add a real screenshot if available)*
+
+![GitForest Preview](<img width="1465" height="733" alt="Screenshot 2026-03-13 at 13 30 19" src="https://github.com/user-attachments/assets/ed89b9cf-7368-4483-97bb-5a40c65d85db" />)
 
 ## ✨ Key Features
 
