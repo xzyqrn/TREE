@@ -28,10 +28,11 @@ test("mergeHybridSearchResults keeps world matches and removes duplicate live ma
       searchResult("torvalds"),
       searchResult("yyx990803"),
     ],
-    { liveError: null },
+    { directorySource: "live", directoryError: null },
   );
 
   assert.deepEqual(merged.world.map((item) => item.login), ["torvalds", "gaearon"]);
-  assert.deepEqual(merged.live.map((item) => item.login), ["yyx990803"]);
-  assert.equal(merged.liveError, null);
+  assert.deepEqual(merged.directory.map((item) => item.login), ["yyx990803"]);
+  assert.equal(merged.directorySource, "live");
+  assert.equal(merged.directoryError, null);
 });

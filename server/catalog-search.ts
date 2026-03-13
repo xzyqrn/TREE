@@ -3,22 +3,23 @@ import { normalizeUsername } from "./world-grid";
 
 export function mergeHybridSearchResults(
   world: WorldSearchResult[],
-  live: WorldSearchResult[],
-  options?: { liveError?: string | null },
+  directory: WorldSearchResult[],
+  options?: { directorySource?: "live" | "cached"; directoryError?: string | null },
 ): WorldSearchResponse {
   const worldKeys = new Set(world.map((result) => normalizeUsername(result.login)));
-  const liveDeduped: WorldSearchResult[] = [];
+  const directoryDeduped: WorldSearchResult[] = [];
 
-  live.forEach((result) => {
+  directory.forEach((result) => {
     const key = normalizeUsername(result.login);
     if (worldKeys.has(key)) return;
-    if (liveDeduped.some((candidate) => normalizeUsername(candidate.login) === key)) return;
-    liveDeduped.push(result);
+    if (directoryDeduped.some((candidate) => normalizeUsername(candidate.login) === key)) return;
+    directoryDeduped.push(result);
   });
 
   return {
     world,
-    live: liveDeduped,
-    liveError: options?.liveError ?? null,
+    directory: directoryDeduped,
+    directorySource: options?.directorySource ?? "cached",
+    directoryError: options?.directoryError ?? null,
   };
 }

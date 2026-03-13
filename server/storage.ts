@@ -1,9 +1,16 @@
 import { randomUUID } from "crypto";
 
-import type { TrackedWorldUser, WorldSearchResult } from "@shared/schema";
+import type { TrackedWorldUser, UserStats, WorldSearchResult } from "@shared/schema";
 import { WORLD_CHUNK_SIZE, chunkKey } from "@shared/schema";
-import { PostgresCatalogStorage } from "./catalog-storage";
-import type { CatalogUserProfile, IStorage } from "./storage-types";
+import { AppwriteStorage } from "./appwrite-storage";
+import { ensureLocalEnvLoaded } from "./runtime-env";
+import type {
+  CachedGithubProfile,
+  CachedGithubStatsRecord,
+  CatalogUserProfile,
+  IStorage,
+} from "./storage-types";
+import { STARTER_WORLD_USERS } from "./starter-users";
 import { assignWorldSlot, forEachChunkInRadius, hash32, normalizeUsername, slotKey } from "./world-grid";
 
 export type { CatalogUserProfile, IStorage } from "./storage-types";
@@ -32,34 +39,15 @@ export class MemStorage implements IStorage {
   private readonly trackedUsers = new Map<string, TrackedWorldUser>();
   private readonly chunkIndex = new Map<string, TrackedWorldUser[]>();
   private readonly occupiedSlots = new Set<string>();
+  private readonly githubProfiles = new Map<string, CatalogUserProfile>();
+  private readonly statsCache = new Map<string, CachedGithubStatsRecord>();
   private static readonly TARGET_USERS_PER_CHUNK = 6;
   private static readonly MIN_RADIUS_CHUNKS = 1;
   private static readonly MAX_RADIUS_CHUNKS = 72;
 
   constructor() {
-    const defaultUsers = [
-      "torvalds",
-      "antirez",
-      "gvanrossum",
-      "matz",
-      "dhh",
-      "nikic",
-      "gaearon",
-      "yyx990803",
-      "sindresorhus",
-      "mrdoob",
-      "paulirish",
-      "ryanflorence",
-      "Rich-Harris",
-      "developit",
-      "tannerlinsley",
-      "bradfitz",
-      "tiangolo",
-      "dtolnay",
-    ];
-
     const syntheticUsers = Math.max(0, parseInt(process.env.GITFOREST_SYNTHETIC_USERS || "0", 10) || 0);
-    this.seedUsers(defaultUsers, "snapshot");
+    this.seedUsers(STARTER_WORLD_USERS, "snapshot");
     if (syntheticUsers > 0) {
       this.seedUsers(
         Array.from({ length: syntheticUsers }, (_, index) => `synthetic-dev-${String(index + 1).padStart(5, "0")}`),
@@ -122,7 +110,11 @@ export class MemStorage implements IStorage {
   }
 
   async addTrackedUser(username: string, profile?: CatalogUserProfile): Promise<TrackedWorldUser> {
-    return this.insertTrackedUser(username, profile ? "live" : "snapshot", profile);
+    const tracked = this.insertTrackedUser(username, profile ? "live" : "snapshot", profile);
+    if (profile) {
+      this.githubProfiles.set(normalizeUsername(profile.login), profile);
+    }
+    return tracked;
   }
 
   async removeTrackedUser(username: string): Promise<void> {
@@ -185,7 +177,104 @@ export class MemStorage implements IStorage {
       .map(worldSearchResultFromUser);
   }
 
-  private seedUsers(usernames: string[], source: TrackedWorldUser["source"]) {
+  async searchDirectoryUsers(query: string, limit: number): Promise<WorldSearchResult[]> {
+    const normalized = normalizeUsername(query);
+    const worldMatches = await this.searchWorldUsers(query, limit);
+    const seen = new Set(worldMatches.map((result) => normalizeUsername(result.login)));
+    const profiles = Array.from(this.githubProfiles.values());
+    const prefixMatches = profiles
+      .filter((profile) => {
+        const key = normalizeUsername(profile.login);
+        return !seen.has(key) && key.startsWith(normalized);
+      })
+      .sort((left, right) => left.login.localeCompare(right.login));
+    const containsMatches = profiles
+      .filter((profile) => {
+        const key = normalizeUsername(profile.login);
+        return !seen.has(key) && !key.startsWith(normalized) && key.includes(normalized);
+      })
+      .sort((left, right) => left.login.localeCompare(right.login));
+
+    return [...prefixMatches, ...containsMatches]
+      .slice(0, limit)
+      .map((profile) => {
+        const world = this.trackedUsers.get(normalizeUsername(profile.login));
+        return {
+          login: profile.login,
+          avatar_url: profile.avatarUrl,
+          html_url: profile.htmlUrl,
+          type: profile.type,
+          source: world?.source ?? "live",
+          inWorld: Boolean(world),
+          planted: Boolean(world?.planted),
+          chunkX: world?.chunkX,
+          chunkZ: world?.chunkZ,
+          cell: world?.cell,
+        } satisfies WorldSearchResult;
+      });
+  }
+
+  async getCachedGithubProfile(username: string): Promise<CachedGithubProfile | null> {
+    const normalized = normalizeUsername(username);
+    const profile = this.githubProfiles.get(normalized);
+    const world = this.trackedUsers.get(normalized);
+    if (!profile && !world) return null;
+
+    return {
+      loginLower: normalized,
+      profile: profile ?? {
+        githubId: world!.githubId,
+        login: world!.username,
+        avatarUrl: `https://github.com/${world!.username}.png`,
+        htmlUrl: `https://github.com/${world!.username}`,
+        type: "User",
+      },
+      inWorld: Boolean(world),
+      chunkX: world?.chunkX,
+      chunkZ: world?.chunkZ,
+      cell: world?.cell,
+    };
+  }
+
+  async upsertCachedGithubProfile(
+    profile: CatalogUserProfile,
+    _options?: {
+      inWorld?: boolean;
+      chunkX?: number;
+      chunkZ?: number;
+      cell?: number;
+      lastLiveSeenAt?: string;
+    },
+  ): Promise<void> {
+    this.githubProfiles.set(normalizeUsername(profile.login), profile);
+  }
+
+  async getCachedUserStats(username: string): Promise<CachedGithubStatsRecord | null> {
+    return this.statsCache.get(normalizeUsername(username)) ?? null;
+  }
+
+  async upsertCachedUserStats(
+    username: string,
+    stats: UserStats,
+    options?: {
+      githubId?: number | null;
+      lastLiveError?: string | null;
+    },
+  ): Promise<void> {
+    const normalized = normalizeUsername(username);
+    this.statsCache.set(normalized, {
+      username: normalized,
+      stats,
+      fetchedAt: stats.cachedAt ?? new Date().toISOString(),
+      lastLiveError: options?.lastLiveError ?? null,
+    });
+  }
+
+  async touchTrackedUserSelection(_username: string): Promise<void> {
+    // MemStorage does not persist selection metadata.
+  }
+
+  private seedUsers(usernames: readonly string[], source: TrackedWorldUser["source"]) {
     const seen = new Set<string>();
     usernames.forEach((username) => {
       const normalized = normalizeUsername(username);
@@ -221,6 +310,8 @@ export class MemStorage implements IStorage {
       worldSeed: slot.worldSeed,
       planted: true,
       source,
+      totalCommitsHint: undefined,
+      statusHint: undefined,
     };
 
     this.trackedUsers.set(normalized, trackedUser);
@@ -243,14 +334,22 @@ export class MemStorage implements IStorage {
 
 let storagePromise: Promise<IStorage> | null = null;
 
-async function createStorage(): Promise<IStorage> {
-  const pgStorage = await PostgresCatalogStorage.createFromEnv();
-  return pgStorage ?? new MemStorage();
+async function createStorage(bindings?: Record<string, string | undefined> | null): Promise<IStorage> {
+  await ensureLocalEnvLoaded();
+  try {
+    return AppwriteStorage.createFromBindings(bindings);
+  } catch (error) {
+    const allowFallback = (typeof process !== "undefined" && (process.env.NODE_ENV === "test" || process.env.GITFOREST_ALLOW_MEM_STORAGE === "1"));
+    if (allowFallback) {
+      return new MemStorage();
+    }
+    throw error;
+  }
 }
 
-export function getStorage() {
+export function getStorage(bindings?: Record<string, string | undefined> | null) {
   if (!storagePromise) {
-    storagePromise = createStorage();
+    storagePromise = createStorage(bindings);
   }
   return storagePromise;
 }

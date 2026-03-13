@@ -86,8 +86,8 @@ function InspectorContent({
         <div className="pixel-alert mt-5">
           <Loader2 size={16} className="animate-spin" />
           <div>
-            <div className="font-semibold">Fetching GitHub profile</div>
-            <div className="mt-1 text-sm">Pulling activity, repos, and language stats for this tree.</div>
+            <div className="font-semibold">Refreshing developer profile</div>
+            <div className="mt-1 text-sm">Trying live GitHub first, then falling back to cached Appwrite data if needed.</div>
           </div>
         </div>
       )}
@@ -107,8 +107,12 @@ function InspectorContent({
                   {statusMeta.label}
                 </span>
                 {stage && <span className="pixel-chip">{stage.shortLabel}</span>}
-                <span className={`pixel-chip ${selectedStats.dataSource === "estimated" ? "pixel-chip-gold" : "pixel-chip-green"}`}>
-                  {selectedStats.dataSource === "estimated" ? "Estimated stats" : "Live GitHub data"}
+                <span className={`pixel-chip ${selectedStats.dataSource === "estimated" ? "pixel-chip-gold" : selectedStats.dataSource === "cached" ? "pixel-chip-blue" : "pixel-chip-green"}`}>
+                  {selectedStats.dataSource === "estimated"
+                    ? "Estimated stats"
+                    : selectedStats.dataSource === "cached"
+                      ? "Cached Appwrite data"
+                      : "Live GitHub data"}
                 </span>
               </div>
               {selectedStats.bio && <p className="max-w-[340px] text-sm leading-6 text-[#405538]">{selectedStats.bio}</p>}

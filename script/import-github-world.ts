@@ -1,10 +1,10 @@
 import { createReadStream } from "fs";
-import readline from "readline";
 import { randomUUID } from "crypto";
+import readline from "readline";
 import { createGunzip } from "zlib";
 
-import type { PoolClient } from "pg";
-import { createCatalogPool, ensureCatalogTables } from "../server/catalog-storage";
+import { AppwriteClient, AppwriteQuery } from "../server/appwrite-client";
+import { ensureLocalEnvLoaded, readAppwriteEnv, stableRowId } from "../server/runtime-env";
 import {
   USERS_PER_SNAPSHOT_CHUNK,
   createSpiralChunkCursor,
@@ -20,8 +20,16 @@ interface SnapshotRow {
   type?: string;
 }
 
-const INSERT_BATCH_SIZE = 1000;
-const READ_BATCH_SIZE = 5000;
+interface WorldUserRowInput {
+  rowId: string;
+  data: Record<string, unknown>;
+}
+
+const UPSERT_BATCH_SIZE = 250;
+
+function toStoredWorldSource(source: "snapshot" | "live") {
+  return source === "snapshot" ? "snapsh" : "github";
+}
 
 function usage() {
   console.log("Usage: npm run import:github-world -- <snapshot.ndjson.gz>");
@@ -33,7 +41,7 @@ function normalizeRow(raw: SnapshotRow) {
   }
 
   return {
-    githubId: Number(raw.id),
+    githubId: String(raw.id),
     login: raw.login,
     loginLower: raw.login.toLowerCase(),
     avatarUrl: raw.avatar_url || `https://github.com/${raw.login}.png`,
@@ -42,159 +50,29 @@ function normalizeRow(raw: SnapshotRow) {
   };
 }
 
-async function insertStageBatch(client: PoolClient, batch: ReturnType<typeof normalizeRow>[]) {
-  if (batch.length === 0) return;
-
-  const values: string[] = [];
-  const params: unknown[] = [];
-
-  batch.forEach((row, index) => {
-    const offset = index * 6;
-    values.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`);
-    params.push(row.githubId, row.login, row.loginLower, row.avatarUrl, row.htmlUrl, row.type);
-  });
-
-  await client.query(
-    `
-      INSERT INTO github_world_import_stage (
-        github_id,
-        login,
-        login_lower,
-        avatar_url,
-        html_url,
-        type
-      ) VALUES ${values.join(", ")}
-    `,
-    params,
-  );
-}
-
-async function readSnapshotIntoStage(client: PoolClient, sourcePath: string) {
-  const stageBatch: ReturnType<typeof normalizeRow>[] = [];
+async function* readSnapshotRows(sourcePath: string) {
   const input = createReadStream(sourcePath);
   const stream = sourcePath.endsWith(".gz") ? input.pipe(createGunzip()) : input;
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
 
-  let count = 0;
-
   for await (const line of rl) {
     if (!line.trim()) continue;
-    stageBatch.push(normalizeRow(JSON.parse(line) as SnapshotRow));
-    if (stageBatch.length >= INSERT_BATCH_SIZE) {
-      await insertStageBatch(client, stageBatch);
-      count += stageBatch.length;
-      stageBatch.length = 0;
-    }
+    yield normalizeRow(JSON.parse(line) as SnapshotRow);
   }
-
-  if (stageBatch.length > 0) {
-    await insertStageBatch(client, stageBatch);
-    count += stageBatch.length;
-  }
-
-  return count;
 }
 
-async function insertCatalogBatch(
-  client: PoolClient,
-  revisionId: string,
-  cursor: ReturnType<typeof createSpiralChunkCursor>,
-  rows: Array<{
-    github_id: string;
-    login: string;
-    login_lower: string;
-    avatar_url: string;
-    html_url: string;
-    type: string;
-  }>,
-  rankStart: number,
+async function upsertWorldUsers(
+  client: AppwriteClient,
+  tableId: string,
+  rows: WorldUserRowInput[],
 ) {
-  const params: unknown[] = [];
-  const values: string[] = [];
-
-  rows.forEach((row, index) => {
-    const rank = rankStart + index;
-    const chunkIndex = Math.floor(rank / USERS_PER_SNAPSHOT_CHUNK);
-    const chunk = cursor.advanceTo(chunkIndex);
-    const cell = snapshotCellForIndex(rank);
-    const worldSeed = hash32(`${row.github_id}:snapshot`);
-    const offset = index * 11;
-    values.push(
-      `($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6}, 'snapshot', $${offset + 7}, $${offset + 8}, $${offset + 9}, $${offset + 10}, $${offset + 11}, NOW(), NOW())`,
-    );
-    params.push(
-      Number(row.github_id),
-      row.login,
-      row.login_lower,
-      row.avatar_url,
-      row.html_url,
-      row.type,
-      chunk.chunkX,
-      chunk.chunkZ,
-      cell,
-      worldSeed,
-      revisionId,
-    );
-  });
-
-  await client.query(
-    `
-      INSERT INTO github_world_catalog (
-        github_id,
-        login,
-        login_lower,
-        avatar_url,
-        html_url,
-        type,
-        source,
-        chunk_x,
-        chunk_z,
-        cell,
-        world_seed,
-        import_revision,
-        created_at,
-        updated_at
-      ) VALUES ${values.join(", ")}
-    `,
-    params,
-  );
-}
-
-async function buildCatalogRevision(client: PoolClient, revisionId: string) {
-  let lastGithubId = 0;
-  let inserted = 0;
-  const cursor = createSpiralChunkCursor();
-
-  while (true) {
-    const batch = await client.query<{
-      github_id: string;
-      login: string;
-      login_lower: string;
-      avatar_url: string;
-      html_url: string;
-      type: string;
-    }>(
-      `
-        SELECT github_id::text, login, login_lower, avatar_url, html_url, type
-        FROM github_world_import_stage
-        WHERE github_id > $1
-        ORDER BY github_id ASC
-        LIMIT $2
-      `,
-      [lastGithubId, READ_BATCH_SIZE],
-    );
-
-    if (batch.rows.length === 0) break;
-
-    await insertCatalogBatch(client, revisionId, cursor, batch.rows, inserted);
-    inserted += batch.rows.length;
-    lastGithubId = Number(batch.rows[batch.rows.length - 1].github_id);
-  }
-
-  return inserted;
+  if (rows.length === 0) return;
+  await client.upsertRows(tableId, rows);
 }
 
 async function main() {
+  await ensureLocalEnvLoaded();
+
   const sourcePath = process.argv[2];
   if (!sourcePath) {
     usage();
@@ -202,62 +80,149 @@ async function main() {
     return;
   }
 
-  const pool = createCatalogPool();
-  if (!pool) {
-    throw new Error("DATABASE_URL is required to import the GitHub world catalog");
-  }
-
+  const env = readAppwriteEnv();
+  const client = new AppwriteClient(env);
   const revisionId = process.env.GITHUB_WORLD_REVISION || randomUUID();
-  const client = await pool.connect();
+  const cursor = createSpiralChunkCursor();
+  const now = new Date().toISOString();
+  const pendingRows: WorldUserRowInput[] = [];
+  const chunkCounts = new Map<string, { chunkX: number; chunkZ: number; activeUserCount: number; plantedUserCount: number }>();
 
-  try {
-    await ensureCatalogTables(pool);
-    await client.query(`CREATE TEMP TABLE github_world_import_stage (github_id BIGINT PRIMARY KEY, login TEXT NOT NULL, login_lower TEXT NOT NULL, avatar_url TEXT NOT NULL, html_url TEXT NOT NULL, type TEXT NOT NULL) ON COMMIT DROP`);
-    await client.query(
-      `
-        INSERT INTO catalog_revisions (revision_id, source_path, record_count, is_active, created_at, activated_at)
-        VALUES ($1, $2, 0, FALSE, NOW(), NULL)
-        ON CONFLICT (revision_id)
-        DO UPDATE SET source_path = EXCLUDED.source_path
-      `,
-      [revisionId, sourcePath],
-    );
+  let insertedCount = 0;
 
-    const stagedCount = await readSnapshotIntoStage(client, sourcePath);
-    await client.query(
-      `
-        DELETE FROM github_world_catalog AS live
-        USING github_world_import_stage AS stage
-        WHERE live.source = 'live'
-          AND live.github_id = stage.github_id
-      `,
-    );
-    await client.query(`DELETE FROM github_world_catalog WHERE import_revision = $1`, [revisionId]);
-    const insertedCount = await buildCatalogRevision(client, revisionId);
+  for await (const row of readSnapshotRows(sourcePath)) {
+    const chunkIndex = Math.floor(insertedCount / USERS_PER_SNAPSHOT_CHUNK);
+    const chunk = cursor.advanceTo(chunkIndex);
+    const cell = snapshotCellForIndex(insertedCount);
+    const chunkKey = `${chunk.chunkX}:${chunk.chunkZ}`;
+    const counts = chunkCounts.get(chunkKey) ?? { chunkX: chunk.chunkX, chunkZ: chunk.chunkZ, activeUserCount: 0, plantedUserCount: 0 };
+    counts.activeUserCount += 1;
+    chunkCounts.set(chunkKey, counts);
 
-    await client.query(`UPDATE catalog_revisions SET is_active = FALSE, activated_at = NULL WHERE is_active = TRUE AND revision_id <> $1`, [revisionId]);
-    await client.query(
-      `
-        UPDATE catalog_revisions
-        SET is_active = TRUE,
-            activated_at = NOW(),
-            record_count = $2
-        WHERE revision_id = $1
-      `,
-      [revisionId, insertedCount],
-    );
-    await client.query(`DELETE FROM github_world_catalog WHERE source = 'snapshot' AND import_revision <> $1`, [revisionId]);
-    await client.query(`DELETE FROM catalog_revisions WHERE revision_id <> $1 AND is_active = FALSE`, [revisionId]);
+    pendingRows.push({
+      rowId: row.githubId,
+      data: {
+        loginLower: row.loginLower,
+        loginDisplay: row.login,
+        githubId: row.githubId,
+        avatarUrl: row.avatarUrl,
+        htmlUrl: row.htmlUrl,
+        accountType: row.type,
+        source: toStoredWorldSource("snapshot"),
+        chunkX: chunk.chunkX,
+        chunkZ: chunk.chunkZ,
+        cell,
+        worldSeed: hash32(`${row.githubId}:snapshot`),
+        slotKey: `${chunk.chunkX}:${chunk.chunkZ}:${cell}`,
+        planted: false,
+        isActive: true,
+        importRevision: revisionId,
+        addedAt: now,
+        plantedAt: null,
+        lastSelectedAt: null,
+        statsStatusHint: null,
+        statsCommitsHint: null,
+      },
+    });
 
-    console.log(JSON.stringify({
-      revisionId,
-      stagedCount,
-      insertedCount,
-    }, null, 2));
-  } finally {
-    client.release();
-    await pool.end();
+    insertedCount += 1;
+
+    if (pendingRows.length >= UPSERT_BATCH_SIZE) {
+      await upsertWorldUsers(client, env.worldUsersTableId, pendingRows);
+      pendingRows.length = 0;
+    }
   }
+
+  if (pendingRows.length > 0) {
+    await upsertWorldUsers(client, env.worldUsersTableId, pendingRows);
+  }
+
+  const activeLiveUsers = await client.listAllRows<{
+    $id: string;
+    chunkX: number;
+    chunkZ: number;
+    planted: boolean;
+  }>(
+    env.worldUsersTableId,
+    [
+      AppwriteQuery.equal("source", [toStoredWorldSource("live")]),
+      AppwriteQuery.equal("isActive", [true]),
+    ],
+    250,
+  );
+
+  activeLiveUsers.forEach((row) => {
+    const chunkKey = `${row.chunkX}:${row.chunkZ}`;
+    const counts = chunkCounts.get(chunkKey) ?? { chunkX: row.chunkX, chunkZ: row.chunkZ, activeUserCount: 0, plantedUserCount: 0 };
+    counts.activeUserCount += 1;
+    if (row.planted) counts.plantedUserCount += 1;
+    chunkCounts.set(chunkKey, counts);
+  });
+
+  const chunkRows = Array.from(chunkCounts.entries()).map(([chunkKey, value]) => ({
+    rowId: stableRowId("chunk", chunkKey),
+    data: {
+      chunkKey,
+      chunkX: value.chunkX,
+      chunkZ: value.chunkZ,
+      activeUserCount: value.activeUserCount,
+      plantedUserCount: value.plantedUserCount,
+      distanceScore: (value.chunkX * value.chunkX) + (value.chunkZ * value.chunkZ),
+      isActive: value.activeUserCount > 0,
+    },
+  }));
+
+  for (let index = 0; index < chunkRows.length; index += UPSERT_BATCH_SIZE) {
+    await client.upsertRows(env.worldChunksTableId, chunkRows.slice(index, index + UPSERT_BATCH_SIZE));
+  }
+
+  const existingSnapshots = await client.listAllRows<{
+    $id: string;
+    source: "snapshot" | "live";
+    importRevision?: string | null;
+  }>(
+    env.worldUsersTableId,
+    [AppwriteQuery.equal("source", [toStoredWorldSource("snapshot")])],
+    250,
+  );
+
+  for (const row of existingSnapshots) {
+    if (row.importRevision === revisionId) continue;
+    await client.upsertRow(env.worldUsersTableId, row.$id, {
+      isActive: false,
+      importRevision: row.importRevision ?? null,
+    });
+  }
+
+  const existingChunks = await client.listAllRows<{ $id: string; chunkKey: string }>(
+    env.worldChunksTableId,
+    [],
+    250,
+  );
+
+  for (const row of existingChunks) {
+    if (chunkCounts.has(row.chunkKey)) continue;
+    await client.upsertRow(env.worldChunksTableId, row.$id, {
+      activeUserCount: 0,
+      plantedUserCount: 0,
+      isActive: false,
+    });
+  }
+
+  await client.upsertRow(env.catalogRevisionsTableId, revisionId, {
+    revisionId,
+    sourcePath,
+    recordCount: insertedCount,
+    isActive: true,
+    createdAt: now,
+    activatedAt: now,
+  });
+
+  console.log(JSON.stringify({
+    revisionId,
+    insertedCount,
+    chunkCount: chunkRows.length,
+  }, null, 2));
 }
 
 main().catch((error) => {

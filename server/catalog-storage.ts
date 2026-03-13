@@ -7,7 +7,7 @@ import type {
 } from "@shared/schema";
 import { WORLD_CHUNK_SIZE } from "@shared/schema";
 import { candidateWorldSlots, hash32, normalizeUsername } from "./world-grid";
-import type { CatalogUserProfile, IStorage, WorldChunkWindow } from "./storage-types";
+import type { CatalogUserProfile, WorldChunkWindow } from "./storage-types";
 
 const REQUIRED_TABLES = [
   "github_world_catalog",
@@ -179,7 +179,7 @@ async function catalogTablesReady(pool: Pool) {
   return result.rows.every((row) => row.table_name !== null);
 }
 
-export class PostgresCatalogStorage implements IStorage {
+export class PostgresCatalogStorage {
   constructor(private readonly pool: Pool) {}
 
   static async createFromEnv() {

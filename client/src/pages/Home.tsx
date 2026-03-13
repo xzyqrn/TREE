@@ -33,18 +33,18 @@ function StatsLoader({
   onLoaded: (username: string, stats: UserStats) => void;
 }) {
   const { data } = useQuery<UserStats>({
-    queryKey: ["/api/users", username, "stats"],
+    queryKey: ["/api/users", username, "stats", "live-first"],
     queryFn: async () => {
-      const response = await fetch(`/api/users/${username}/stats`);
+      const response = await fetch(`/api/users/${username}/stats?mode=live-first`);
       if (!response.ok) {
         const payload = await response.json().catch(() => null);
         throw new Error(payload?.error || `Failed to load ${username}`);
       }
       return response.json();
     },
-    staleTime: 10 * 60 * 1000,
+    staleTime: 0,
     gcTime: 15 * 60 * 1000,
-    retry: 1,
+    retry: false,
   });
 
   useEffect(() => {
@@ -128,7 +128,6 @@ export default function Home() {
   const [chunkCache, setChunkCache] = useState<Record<string, WorldChunk>>({});
   const [chunkWindowCenter, setChunkWindowCenter] = useState<ChunkWindowChange>({ cx: 0, cz: 0 });
   const [visibleTrackedUsers, setVisibleTrackedUsers] = useState<string[]>([]);
-  const [hoveredUser, setHoveredUser] = useState<string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<WorldUserLocation | null>(null);
   const [pendingJumpUsername, setPendingJumpUsername] = useState<string | null>(null);
   const [catalogCountDelta, setCatalogCountDelta] = useState(0);
@@ -254,21 +253,14 @@ export default function Home() {
     () => visibleTrackedUsers.filter((username) => worldUserByName[username]?.planted),
     [visibleTrackedUsers, worldUserByName],
   );
-  const debouncedHoveredUser = useDebouncedValue(hoveredUser, 180);
   const selectedWorldUser = selectedUser ? worldUserByName[selectedUser] ?? null : null;
 
-  const prioritizedHydrateUsernames = useMemo(() => {
-    const next = new Set<string>();
-    if (selectedUser) next.add(selectedUser);
-    if (debouncedHoveredUser) next.add(debouncedHoveredUser);
-    plantedVisibleUsers.forEach((username) => next.add(username));
-    return Array.from(next);
-  }, [debouncedHoveredUser, plantedVisibleUsers, selectedUser]);
-  const statsLoadedCount = useMemo(
-    () => prioritizedHydrateUsernames.reduce((count, username) => count + (statsMap[username] ? 1 : 0), 0),
-    [prioritizedHydrateUsernames, statsMap],
+  const prioritizedHydrateUsernames = useMemo(
+    () => (selectedUser ? [selectedUser] : []),
+    [selectedUser],
   );
-  const statsPendingCount = Math.max(0, prioritizedHydrateUsernames.length - statsLoadedCount);
+  const statsLoadedCount = selectedUser && statsMap[selectedUser] ? 1 : 0;
+  const statsPendingCount = selectedUser && !statsMap[selectedUser] ? 1 : 0;
 
   const jumpToTrackedUser = useCallback(async (username: string) => {
     const normalized = username.toLowerCase();
@@ -347,7 +339,6 @@ export default function Home() {
         return next;
       });
       setVisibleTrackedUsers((prev) => prev.filter((candidate) => candidate !== normalized));
-      if (hoveredUser === normalized) setHoveredUser(null);
       setChunkCache((prev) => {
         const next: Record<string, WorldChunk> = {};
         Object.entries(prev).forEach(([key, chunk]) => {
@@ -409,7 +400,7 @@ export default function Home() {
             onSelectUser={setSelectedUser}
             onChunkWindowChange={setChunkWindowCenter}
             onVisibleTrackedUsersChange={setVisibleTrackedUsers}
-            onHoverUserChange={setHoveredUser}
+            onHoverUserChange={undefined}
             onSceneReady={() => setSceneReady(true)}
           />
         ) : (

@@ -359,5 +359,32 @@ Original prompt: fix the rendering issue, the bugs, the glitch
   - Live scene Playwright capture against a fresh `DEV_PORT=5006 npm run dev` session saved:
     - `output/landscape-live/shot-0.png`
     - `output/landscape-live/shot-1.png`
-    - `output/landscape-live/state-0.json`
+  - `output/landscape-live/state-0.json`
   - Live scene state remained healthy during the capture: `chunk={cx:-1,cz:0}`, `loadedChunks=9`, `visibleTrees=7`, `markerTrees=0`, and no `errors-0.json` was produced.
+
+- Follow-up prompt: "PLEASE IMPLEMENT THIS PLAN" / "run it" (Appwrite cutover)
+- Appwrite cutover implementation + live bring-up applied:
+  - Added `server/runtime-env.ts` parent-directory `.env` discovery so `TREE` can load the Appwrite env stored at `/Volumes/herojay/tree/.env` without manually sourcing it.
+  - Replaced the Appwrite query serializer in `server/appwrite-client.ts` with Appwrite-compatible JSON query blobs and made bulk row helpers fan out through deterministic `upsertRow` calls.
+  - Added `server/appwrite-storage.ts` normalization for Appwrite’s existing legacy world `source` enum values (`snapsh` / `github`) while still exposing canonical app-level values (`snapshot` / `live`).
+  - Added `server/starter-users.ts` plus `script/setup-appwrite.ts` to reconcile the live Appwrite schema, create missing columns/indexes, seed a starter 18-user world when empty, and rebuild chunk/cache tables.
+  - Updated `routes-hono.ts` so cached stats reads also touch `lastSelectedAt`, and updated the Appwrite import/migration scripts to use the new query helper and stored source mapping.
+  - Added `npm run appwrite:setup`.
+- Live Appwrite verification:
+  - `npm run appwrite:setup` completed successfully and reported `seededUsers=18`, `activeUsers=18`, `chunkCount=7`.
+  - Local dev server now boots against Appwrite on `DEV_PORT=5010`.
+  - API checks against the live server:
+    - `/api/world/bootstrap` returns `catalogCount=18`, `trackedCount=0`, and a populated chunk window from Appwrite.
+    - `/api/search?q=tor&mode=suggest` returns cached Appwrite directory results after one live submit search.
+    - `/api/search?q=tor&mode=submit` returns live GitHub directory results and upserts them into Appwrite.
+    - `/api/users/torvalds/stats?mode=live-first` returns live GitHub stats and writes them into `github_stats_cache`.
+    - `/api/users/torvalds/stats?mode=cache-only` subsequently returns the cached Appwrite payload with `dataSource:"cached"`.
+    - `POST /api/users` and `DELETE /api/users/:username` were smoke-tested with `torvalds`; planting and unplanting both worked, and the state was restored to unplanted afterward.
+- Final verification:
+  - `npm run check` passes.
+  - `npm run build` passes (same existing PostCSS warning during client build, but build succeeds).
+  - `npx tsx --test server/catalog-search.test.ts server/world-grid.test.ts client/src/components/forest/isometric/isometric-math.test.ts` passes.
+  - Playwright client smoke capture against `http://127.0.0.1:5010` saved:
+    - `output/appwrite-cutover-smoke/shot-0.png`
+    - `output/appwrite-cutover-smoke/state-0.json`
+  - The smoke state reports `loadedChunks=9`, `visibleTrees=7`, `chunk={cx:-1,cz:0}`, and the screenshot shows the seeded Appwrite world rendering correctly.

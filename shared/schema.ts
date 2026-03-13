@@ -40,7 +40,8 @@ export const userStatsSchema = z.object({
   status: z.enum(["active", "moderate", "occasional", "inactive"]),
   lastActive: z.string().nullable(),
   created_at: z.string(),
-  dataSource: z.enum(["live", "estimated"]),
+  dataSource: z.enum(["live", "cached", "estimated"]),
+  cachedAt: z.string().nullable(),
   notice: z.string().optional(),
 });
 
@@ -62,6 +63,8 @@ export const trackedWorldUserSchema = trackedUserSchema.extend({
   worldSeed: z.number().int().nonnegative(),
   planted: z.boolean(),
   source: worldUserSourceSchema,
+  totalCommitsHint: z.number().optional(),
+  statusHint: userStatsSchema.shape.status.optional(),
 });
 
 export const worldChunkUserSummarySchema = z.object({
@@ -137,9 +140,10 @@ export const worldSearchResultSchema = z.object({
 });
 
 export const worldSearchResponseSchema = z.object({
-  live: z.array(worldSearchResultSchema),
+  directory: z.array(worldSearchResultSchema),
   world: z.array(worldSearchResultSchema),
-  liveError: z.string().nullable().optional(),
+  directorySource: z.enum(["live", "cached"]),
+  directoryError: z.string().nullable().optional(),
 });
 
 export const plantDeveloperResponseSchema = z.object({

@@ -1,3 +1,4 @@
+import { ensureLocalEnvLoaded } from "./runtime-env";
 import { createHonoApp } from "./routes-hono";
 
 export function log(message: string, source = "hono") {
@@ -9,6 +10,8 @@ export function log(message: string, source = "hono") {
   });
   console.log(`${formattedTime} [${source}] ${message}`);
 }
+
+await ensureLocalEnvLoaded();
 
 // Create the Hono app (works on both Node.js and Cloudflare Workers)
 const app = createHonoApp();

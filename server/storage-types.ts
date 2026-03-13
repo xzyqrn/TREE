@@ -23,6 +23,22 @@ export interface CatalogUserProfile {
   type: string;
 }
 
+export interface CachedGithubProfile {
+  loginLower: string;
+  profile: CatalogUserProfile;
+  inWorld: boolean;
+  chunkX?: number;
+  chunkZ?: number;
+  cell?: number;
+}
+
+export interface CachedGithubStatsRecord {
+  username: string;
+  stats: import("@shared/schema").UserStats;
+  fetchedAt: string;
+  lastLiveError: string | null;
+}
+
 export interface IStorage {
   getTrackedUsers(): Promise<TrackedWorldUser[]>;
   getTrackedCount(): Promise<number>;
@@ -35,4 +51,26 @@ export interface IStorage {
   getTrackedUserLocation(username: string): Promise<TrackedWorldUser | null>;
   getChunkWindow(cx: number, cz: number, radius: number): Promise<WorldChunkWindow>;
   searchWorldUsers(query: string, limit: number): Promise<WorldSearchResult[]>;
+  searchDirectoryUsers(query: string, limit: number): Promise<WorldSearchResult[]>;
+  getCachedGithubProfile(username: string): Promise<CachedGithubProfile | null>;
+  upsertCachedGithubProfile(
+    profile: CatalogUserProfile,
+    options?: {
+      inWorld?: boolean;
+      chunkX?: number;
+      chunkZ?: number;
+      cell?: number;
+      lastLiveSeenAt?: string;
+    },
+  ): Promise<void>;
+  getCachedUserStats(username: string): Promise<CachedGithubStatsRecord | null>;
+  upsertCachedUserStats(
+    username: string,
+    stats: import("@shared/schema").UserStats,
+    options?: {
+      githubId?: number | null;
+      lastLiveError?: string | null;
+    },
+  ): Promise<void>;
+  touchTrackedUserSelection(username: string): Promise<void>;
 }

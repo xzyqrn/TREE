@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ExternalLink, Loader2, Sprout, Trees, X } from "lucide-react";
+import { AlertTriangle, ExternalLink, Loader2, Search, Sprout, Trees, X } from "lucide-react";
 
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -15,8 +15,8 @@ interface ForestSearchPanelProps {
   onJumpToUser: (username: string) => void;
 }
 
-async function fetchSearchResults(query: string): Promise<WorldSearchResponse> {
-  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+async function fetchSearchResults(query: string, mode: "suggest" | "submit"): Promise<WorldSearchResponse> {
+  const response = await fetch(`/api/search?q=${encodeURIComponent(query)}&mode=${mode}`);
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error || `Search failed (${response.status})`);
@@ -100,12 +100,16 @@ export function ForestSearchPanel({
   const isMobile = useIsMobile();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
+  const [searchMode, setSearchMode] = useState<"suggest" | "submit">("suggest");
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       setDebouncedQuery("");
+      setActiveQuery("");
+      setSearchMode("suggest");
       return;
     }
     const timeout = window.setTimeout(() => inputRef.current?.focus(), 30);
@@ -117,22 +121,35 @@ export function ForestSearchPanel({
     return () => window.clearTimeout(timeout);
   }, [query]);
 
+  useEffect(() => {
+    if (!open) return;
+    setSearchMode("suggest");
+    setActiveQuery(debouncedQuery);
+  }, [debouncedQuery, open]);
+
+  const triggerLiveSearch = () => {
+    const nextQuery = query.trim();
+    if (!nextQuery) return;
+    setSearchMode("submit");
+    setActiveQuery(nextQuery);
+  };
+
   const searchQuery = useQuery({
-    queryKey: ["/api/search", debouncedQuery],
-    queryFn: () => fetchSearchResults(debouncedQuery),
-    enabled: open && debouncedQuery.length >= 1,
+    queryKey: ["/api/search", searchMode, activeQuery],
+    queryFn: () => fetchSearchResults(activeQuery, searchMode),
+    enabled: open && activeQuery.length >= 1,
     staleTime: 30 * 1000,
     retry: false,
   });
 
   const state = useMemo(() => {
     if (!open) return "closed";
-    if (debouncedQuery.length === 0) return "idle";
+    if (activeQuery.length === 0) return "idle";
     if (searchQuery.isFetching) return "searching";
     if (searchQuery.error) return "error";
-    if ((searchQuery.data?.live.length ?? 0) + (searchQuery.data?.world.length ?? 0) === 0) return "not-found";
+    if ((searchQuery.data?.directory.length ?? 0) + (searchQuery.data?.world.length ?? 0) === 0) return "not-found";
     return "results";
-  }, [debouncedQuery.length, open, searchQuery.data, searchQuery.error, searchQuery.isFetching]);
+  }, [activeQuery.length, open, searchQuery.data, searchQuery.error, searchQuery.isFetching]);
 
   if (!open) return null;
 
@@ -153,34 +170,51 @@ export function ForestSearchPanel({
         </div>
 
         <Command className={`mt-4 rounded-none bg-transparent text-[#304529] ${isMobile ? "flex min-h-0 flex-1 flex-col" : ""}`}>
-          <CommandInput
-            ref={inputRef}
-            value={query}
-            onValueChange={setQuery}
-            placeholder="Search GitHub username"
-            data-testid="input-search-user"
-            className="font-['DM_Sans'] text-[14px]"
-          />
+          <div className="flex items-center gap-2">
+            <CommandInput
+              ref={inputRef}
+              value={query}
+              onValueChange={setQuery}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  triggerLiveSearch();
+                }
+              }}
+              placeholder="Search GitHub username"
+              data-testid="input-search-user"
+              className="font-['DM_Sans'] text-[14px]"
+            />
+            <button
+              type="button"
+              onClick={triggerLiveSearch}
+              className="pixel-button min-w-[126px] justify-center px-3 py-3 text-[11px]"
+              data-testid="button-submit-search"
+            >
+              <Search size={13} />
+              Search GitHub
+            </button>
+          </div>
           <CommandList className={`mt-2 overflow-y-auto px-0 ${isMobile ? "min-h-0 flex-1" : "max-h-[340px]"}`}>
             {state === "idle" && (
               <div className="rounded-[14px] border-2 border-[#c4b16f] bg-[#f6ecbe] px-4 py-5 text-sm leading-6 text-[#405538]">
-                Start typing to search GitHub. Planted developers and already-indexed world matches will stay searchable even if live GitHub search slows down.
+                Start typing for Appwrite suggestions. Press Enter or use the button to refresh against live GitHub.
               </div>
             )}
 
             {state === "searching" && (
               <div className="pixel-inline-status">
                 <Loader2 size={15} className="animate-spin" />
-                Searching GitHub and the world index
+                {searchMode === "submit" ? "Searching GitHub and Appwrite" : "Searching Appwrite cache"}
               </div>
             )}
 
-            {searchQuery.data?.liveError && (
+            {searchQuery.data?.directoryError && (
               <div className="pixel-alert pixel-alert-warn">
                 <AlertTriangle size={16} />
                 <div>
-                  <div className="font-semibold">Live GitHub search is rate-limited.</div>
-                  <div className="mt-1 text-sm">{searchQuery.data.liveError} Local world matches are still available.</div>
+                  <div className="font-semibold">Using cached directory results.</div>
+                  <div className="mt-1 text-sm">{searchQuery.data.directoryError} Local world matches are still available.</div>
                 </div>
               </div>
             )}
@@ -205,9 +239,9 @@ export function ForestSearchPanel({
 
             {state === "results" && (
               <>
-                {(searchQuery.data?.live.length ?? 0) > 0 && (
-                  <CommandGroup heading="Live GitHub results" className="[&_[cmdk-group-heading]]:px-0 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-['Silkscreen'] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.18em]">
-                    {(searchQuery.data?.live ?? []).map((result) =>
+                {(searchQuery.data?.directory.length ?? 0) > 0 && (
+                  <CommandGroup heading={`GitHub directory · ${searchQuery.data?.directorySource === "live" ? "LIVE" : "CACHED"}`} className="[&_[cmdk-group-heading]]:px-0 [&_[cmdk-group-heading]]:pb-2 [&_[cmdk-group-heading]]:font-['Silkscreen'] [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-[0.18em]">
+                    {(searchQuery.data?.directory ?? []).map((result: WorldSearchResult) =>
                       renderResultItem(result, pendingUsername, pendingJumpUsername, onAddUser, onJumpToUser),
                     )}
                   </CommandGroup>
